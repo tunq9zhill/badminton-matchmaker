@@ -1,4 +1,4 @@
-import type { Match, Session, Team } from "../app/types";
+import type { Session, Team } from "../app/types";
 
 export function teamPairKey(a: string, b: string) {
   return [a, b].sort().join("__");

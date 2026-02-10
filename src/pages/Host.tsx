@@ -13,7 +13,7 @@ import {
   upsertPlayers, assertHost
 } from "../features/session/api";
 import type { Match, Player, Session, Team, Court } from "../app/types";
-import { buildHostLink, buildViewerLink } from "../app/links";
+import { buildViewerLink } from "../app/links";
 import { buildInitialTeams } from "../engine/pairing";
 import { setTeamsAndQueue, assignNextForCourt, finishMatch, startOnce } from "../features/session/mutations";
 import { Modal } from "../ui/Modal";
@@ -38,7 +38,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
 
   const origin = location.origin;
   const viewerLink = buildViewerLink(origin, props.sessionId);
-  const hostLink = buildHostLink(origin, props.sessionId, props.secret ?? "");
+  // const hostLink = buildHostLink(origin, props.sessionId, props.secret ?? "");
   const { lang, setLang } = useI18n();
     <button
     className="text-xs font-semibold text-slate-700"
