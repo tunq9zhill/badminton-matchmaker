@@ -14,8 +14,8 @@ import {
 } from "../features/session/api";
 import type { Match, Player, Session, Team, Court } from "../app/types";
 import { buildHostLink, buildViewerLink } from "../app/links";
-import { buildInitialTeams, teammateHistoryFromTeams } from "../engine/pairing";
-import { setTeamsAndQueue, assignNextForCourt, beginMatch, finishMatch, startOnce } from "../features/session/mutations";
+import { buildInitialTeams } from "../engine/pairing";
+import { setTeamsAndQueue, assignNextForCourt, finishMatch, startOnce } from "../features/session/mutations";
 import { Modal } from "../ui/Modal";
 import { useI18n } from "../app/i18n";
 import type { ResultRow } from "../features/session/schema";
@@ -39,7 +39,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
   const origin = location.origin;
   const viewerLink = buildViewerLink(origin, props.sessionId);
   const hostLink = buildHostLink(origin, props.sessionId, props.secret ?? "");
-  const { lang, setLang, t } = useI18n();
+  const { lang, setLang } = useI18n();
     <button
     className="text-xs font-semibold text-slate-700"
     onClick={() => setLang(lang === "th" ? "en" : "th")}
@@ -477,8 +477,6 @@ function FinishModal(props: {
   const needsB = props.teamB.playerIds.length === 3;
   const labelA = props.teamA.playerIds.map((id)=>props.playerById(id)?.name ?? "?").join(" + ");
   const labelB = props.teamB.playerIds.map((id)=>props.playerById(id)?.name ?? "?").join(" + ");
-  const oddA = props.teamA.playerIds.length === 3 && props.teamA.pendingOddChoice;
-  const oddB = props.teamB.playerIds.length === 3 && props.teamB.pendingOddChoice;
 
 
   return (

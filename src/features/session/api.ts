@@ -1,6 +1,6 @@
 import { nanoid } from "nanoid";
 import {
-  collection, doc, setDoc, serverTimestamp, writeBatch,
+  collection, doc, setDoc, writeBatch,
   onSnapshot, query, orderBy, limit, getDoc, runTransaction, updateDoc
 } from "firebase/firestore";
 import { db, ensureAnonAuth } from "../../app/firebase";

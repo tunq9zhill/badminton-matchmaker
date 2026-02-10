@@ -1,5 +1,3 @@
-import type { Match, Player, Session, Team, Court } from "../../app/types";
-
 export const COL = {
   sessions: "sessions",
   players: "players",

@@ -1,12 +1,11 @@
 import { nanoid } from "nanoid";
 import {
-  doc, collection, runTransaction, writeBatch, deleteDoc, updateDoc
+  doc, collection, runTransaction, writeBatch, updateDoc
 } from "firebase/firestore";
 import { db, ensureAnonAuth } from "../../app/firebase";
-import type { Match, Player, Session, Team, Court } from "../../app/types";
+import type { Match, Player, Session, Team } from "../../app/types";
 import { COL, type ResultRow } from "./schema";
 import { proposeNextMatch } from "../../engine/scheduler";
-import { nextPhase } from "../../engine/phase";
 import { getDoc, getDocs } from "firebase/firestore";
 import { rebuildTeamsAvoidingTeammates, teammateHistoryFromTeams } from "../../engine/pairing";
 
@@ -190,11 +189,6 @@ export async function cancelMatchAndReschedule(sessionId: string, matchId: strin
     tx.update(cRef, { currentMatchId: null });
   });
 
-  // attempt to schedule next for same court
-  // (separate transaction keeps it resilient under intermittent disconnects)
-  const mDoc = doc(db, COL.sessions, sessionId, COL.matches, matchId);
-  // We trust match includes courtId; host UI passes courtId too in production.
-  // For this demo, host UI calls assignNextForCourt(sessionId, courtId) after cancel.
 }
 
 export async function finishMatch(
@@ -340,11 +334,7 @@ export async function finishMatch(
   });
 }
 
-function rotateTwo(team: Team): string[] {
-  const ids = team.playerIds;
-  const bench = (team.rotationIndex ?? 0) % 3;
-  return ids.filter((_, idx) => idx !== bench).slice(0, 2);
-}
+
 
 export async function resetPairing(sessionId: string) {
   const user = await ensureAnonAuth();
@@ -360,7 +350,7 @@ export async function resetPairing(sessionId: string) {
   const players = playersSnap.docs.map((d) => d.data() as Player);
 
   const teamsSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.teams));
-  const oldTeams = teamsSnap.docs.map((d) => d.data() as Team);
+
 
   // Rebuild teams avoiding teammate repeats (best-effort)
   const { teams: newTeams, warnings } = rebuildTeamsAvoidingTeammates(players, s.teammateHistory);
