@@ -6,6 +6,7 @@ import { createSession } from "../features/session/api";
 import { buildHostLink, buildViewerLink } from "../app/links";
 import { useAppStore } from "../app/store";
 import { nanoid } from "nanoid";
+import { copyToClipboard } from "../app/clipboard";
 
 export function Landing() {
   const [courtCount, setCourtCount] = useState("2");
@@ -67,11 +68,32 @@ export function Landing() {
                   courtCount: Number(courtCount),
                   oddMode,
                 });
+
                 const origin = location.origin;
                 const host = buildHostLink(origin, sessionId, secret);
                 const viewer = buildViewerLink(origin, sessionId);
-                await navigator.clipboard.writeText(host);
-                setToast({ id: nanoid(), kind: "success", message: "Host link copied. Open it on your host phone." });
+
+                // ✅ iOS-friendly: share -> copy -> prompt fallback
+                let copied = false;
+
+                if ((navigator as any).share) {
+                  try {
+                    await (navigator as any).share({ title: "Host Link", url: host });
+                    copied = true; // ถือว่าแชร์สำเร็จ = ส่งต่อได้
+                  } catch {
+                    // ignore
+                  }
+                }
+
+                if (!copied) copied = await copyToClipboard(host);
+
+                if (!copied) {
+                  // ✅ fallback ที่ชัวร์สุดบน iPhone: ให้ผู้ใช้กดค้าง copy เอง
+                  window.prompt("คัดลอกลิงก์ Host:", host);
+                } else {
+                  setToast({ id: nanoid(), kind: "success", message: "คัดลอก/แชร์ลิงก์ Host แล้ว" });
+                }
+
                 history.pushState({}, "", `/h/${sessionId}?secret=${encodeURIComponent(secret)}`);
                 window.dispatchEvent(new PopStateEvent("popstate"));
                 console.log({ host, viewer });
@@ -82,7 +104,6 @@ export function Landing() {
           >
             Create & Copy Host Link
           </Button>
-
           <div className="text-xs text-slate-500">
             Tip: Host link includes secret; viewer link doesn’t. Only the host device (anonymous UID) can write.
           </div>
