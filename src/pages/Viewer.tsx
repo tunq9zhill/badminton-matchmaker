@@ -58,8 +58,24 @@ export function Viewer(props: { sessionId: string }) {
         <CardBody className="space-y-2">
           {players.map((p) => (
             <div key={p.id} className="rounded-xl border border-slate-100 px-3 py-2 text-sm">
-              <PlayerIdentity player={p} onOpenImage={(url) => setSelectedImage({ name: p.name, url })} />
-              <div className="text-xs text-slate-500 mt-1">W {p.stats.wins} · L {p.stats.losses} · played {p.stats.played}</div>
+              <div className="flex items-center gap-3">
+                {p.avatarDataUrl ? (
+                  <button
+                    type="button"
+                    className="h-10 w-10 overflow-hidden rounded-full border border-slate-200"
+                    onClick={() => setSelectedImage({ name: p.name, url: p.avatarDataUrl! })}
+                    title={`Open ${p.name} profile`}
+                  >
+                    <img src={p.avatarDataUrl} alt={`avatar-${p.name}`} className="h-full w-full object-cover" />
+                  </button>
+                ) : (
+                  <div className="h-10 w-10 rounded-full border border-dashed border-slate-300 bg-slate-50" />
+                )}
+                <div>
+                  <div className="font-semibold">{p.name}</div>
+                  <div className="text-xs text-slate-500">W {p.stats.wins} · L {p.stats.losses} · played {p.stats.played}</div>
+                </div>
+              </div>
             </div>
           ))}
           {players.length === 0 && <div className="text-sm text-slate-500">No players yet.</div>}
@@ -158,49 +174,6 @@ export function Viewer(props: { sessionId: string }) {
           </div>
         </Modal>
       )}
-    </div>
-  );
-}
-
-function TeamLine(props: {
-  team: Team | undefined;
-  playerById: Map<string, Player>;
-  onOpenImage: (name: string, url: string) => void;
-}) {
-  if (!props.team) return <div className="font-semibold">—</div>;
-
-  return (
-    <div className="flex flex-wrap items-center gap-1">
-      {props.team.playerIds.map((id, i) => {
-        const p = props.playerById.get(id);
-        if (!p) return <span key={id} className="font-semibold">?</span>;
-        return (
-          <div key={id} className="inline-flex items-center gap-1">
-            <PlayerIdentity player={p} compact onOpenImage={(url) => props.onOpenImage(p.name, url)} />
-            {i < props.team!.playerIds.length - 1 && <span className="text-slate-400">+</span>}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function PlayerIdentity(props: { player: Player; compact?: boolean; onOpenImage: (url: string) => void }) {
-  const avatarSize = props.compact ? "h-6 w-6" : "h-10 w-10";
-  return (
-    <div className="inline-flex items-center gap-2">
-      {props.player.avatarDataUrl ? (
-        <button
-          type="button"
-          className={`${avatarSize} overflow-hidden rounded-full border border-slate-200`}
-          onClick={() => props.onOpenImage(props.player.avatarDataUrl!)}
-        >
-          <img src={props.player.avatarDataUrl} alt={`avatar-${props.player.name}`} className="h-full w-full object-cover" />
-        </button>
-      ) : (
-        <div className={`${avatarSize} rounded-full border border-dashed border-slate-300 bg-slate-50`} />
-      )}
-      <span className="font-semibold">{props.player.name}</span>
     </div>
   );
 }
