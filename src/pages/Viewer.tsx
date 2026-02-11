@@ -3,6 +3,7 @@ import { ensureAnonAuth } from "../app/firebase";
 import { useFirestoreConnectionPing } from "../app/connection";
 import { Card, CardBody, CardHeader } from "../ui/Card";
 import { Chip } from "../ui/Chip";
+import { Modal } from "../ui/Modal";
 import {
   subscribeSession, subscribePlayers, subscribeTeams, subscribeCourts, subscribeMatches, subscribeRecentResults
 } from "../features/session/api";
@@ -18,6 +19,7 @@ export function Viewer(props: { sessionId: string }) {
   const [courts, setCourts] = useState<Court[]>([]);
   const [matches, setMatches] = useState<Match[]>([]);
   const [results, setResults] = useState<any[]>([]);
+  const [selectedImage, setSelectedImage] = useState<{ name: string; url: string } | null>(null);
 
   useEffect(() => { ensureAnonAuth().catch(()=>{}); }, []);
   useEffect(() => subscribeSession(props.sessionId, setSession), [props.sessionId]);
@@ -50,6 +52,35 @@ export function Viewer(props: { sessionId: string }) {
           </Chip>
         </div>
       </div>
+
+      <Card>
+        <CardHeader title="Players (from Host)" />
+        <CardBody className="space-y-2">
+          {players.map((p) => (
+            <div key={p.id} className="rounded-xl border border-slate-100 px-3 py-2 text-sm">
+              <div className="flex items-center gap-3">
+                {p.avatarDataUrl ? (
+                  <button
+                    type="button"
+                    className="h-10 w-10 overflow-hidden rounded-full border border-slate-200"
+                    onClick={() => setSelectedImage({ name: p.name, url: p.avatarDataUrl! })}
+                    title={`Open ${p.name} profile`}
+                  >
+                    <img src={p.avatarDataUrl} alt={`avatar-${p.name}`} className="h-full w-full object-cover" />
+                  </button>
+                ) : (
+                  <div className="h-10 w-10 rounded-full border border-dashed border-slate-300 bg-slate-50" />
+                )}
+                <div>
+                  <div className="font-semibold">{p.name}</div>
+                  <div className="text-xs text-slate-500">W {p.stats.wins} · L {p.stats.losses} · played {p.stats.played}</div>
+                </div>
+              </div>
+            </div>
+          ))}
+          {players.length === 0 && <div className="text-sm text-slate-500">No players yet.</div>}
+        </CardBody>
+      </Card>
 
       <Card>
         <CardHeader title="Courts" />
@@ -132,6 +163,14 @@ export function Viewer(props: { sessionId: string }) {
           {results.length === 0 && <div className="text-sm text-slate-500">No results yet.</div>}
         </CardBody>
       </Card>
+
+      {selectedImage && (
+        <Modal title={selectedImage.name} onClose={() => setSelectedImage(null)}>
+          <div className="flex justify-center">
+            <img src={selectedImage.url} alt={selectedImage.name} className="max-h-[70vh] w-auto rounded-xl border border-slate-200" />
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
