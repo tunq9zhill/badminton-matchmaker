@@ -168,7 +168,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
                 </form>
           )}
 
-          <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+          <div className="space-y-2">
             {players.map((p) => (
               <div key={p.id} className="rounded-xl border border-slate-100 px-3 py-2">
                 <div className="flex items-center gap-3">
@@ -194,7 +194,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
                 {!isLocked && (
                   <div className="mt-2 flex flex-wrap items-center gap-3 text-xs font-semibold">
                     <label className="cursor-pointer text-slate-700">
-                      {isMobile ? "เลือกรูป" : "อัปโหลดรูป"}
+                      อัปโหลดรูป
                       <input
                         type="file"
                         accept="image/*"
@@ -218,35 +218,6 @@ export function Host(props: { sessionId: string; secret?: string }) {
                         }}
                       />
                     </label>
-
-                    {isMobile && (
-                      <label className="cursor-pointer text-slate-700">
-                        เปิดกล้อง
-                        <input
-                          type="file"
-                          accept="image/*"
-                          capture="environment"
-                          className="hidden"
-                          disabled={uploadingPlayerId === p.id}
-                          onChange={async (e) => {
-                            const f = e.target.files?.[0];
-                            e.currentTarget.value = "";
-                            if (!f) return;
-
-                            try {
-                              setUploadingPlayerId(p.id);
-                              const avatarDataUrl = await compressImageToDataUrl(f, 320, 0.78);
-                              await updatePlayerAvatar(props.sessionId, p.id, avatarDataUrl);
-                              setToast({ id: nanoid(), kind: "success", message: `อัปโหลดรูปของ ${p.name} แล้ว` });
-                            } catch (err: any) {
-                              setToast({ id: nanoid(), kind: "error", message: err?.message ?? "อัปโหลดรูปไม่สำเร็จ" });
-                            } finally {
-                              setUploadingPlayerId(null);
-                            }
-                          }}
-                        />
-                      </label>
-                    )}
 
                     {p.avatarDataUrl && (
                       <button
@@ -569,29 +540,6 @@ async function compressImageToDataUrl(file: File, maxEdge = 320, quality = 0.8):
   ctx.drawImage(img, 0, 0, width, height);
 
   return canvas.toDataURL("image/jpeg", quality);
-}
-
-function TeamLine(props: { team: Team | undefined; playerById: (id: string) => Player | undefined }) {
-  if (!props.team) return <div className="font-semibold">—</div>;
-
-  return (
-    <div className="flex flex-wrap items-center gap-1 font-semibold">
-      {props.team.playerIds.map((id, idx) => {
-        const p = props.playerById(id);
-        return (
-          <div key={id} className="inline-flex items-center gap-1">
-            {p?.avatarDataUrl ? (
-              <img src={p.avatarDataUrl} alt={`avatar-${p.name}`} className="h-6 w-6 rounded-full object-cover border border-slate-200" />
-            ) : (
-              <div className="h-6 w-6 rounded-full border border-dashed border-slate-300 bg-slate-50" />
-            )}
-            <span>{p?.name ?? "?"}</span>
-            {idx < props.team!.playerIds.length - 1 && <span className="text-slate-400">+</span>}
-          </div>
-        );
-      })}
-    </div>
-  );
 }
 
 function formatTeam(team: Team | undefined, playerById: (id: string) => Player | undefined) {
