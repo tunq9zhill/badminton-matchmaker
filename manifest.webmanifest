@@ -1,0 +1,18 @@
+{
+  "name": "BadMatch",
+  "short_name": "BadMatch",
+  "description": "จัดการแข่งขันแบดมินตันและสร้างคู่แบบเรียลไทม์",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#1d4ed8",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
