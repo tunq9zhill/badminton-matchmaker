@@ -70,28 +70,16 @@ export function Landing() {
                 });
 
                 const origin = location.origin;
-                const host = buildHostLink(origin, sessionId, secret);
                 const viewer = buildViewerLink(origin, sessionId);
+                const host = buildHostLink(origin, sessionId, secret);
 
-                // ✅ iOS-friendly: share -> copy -> prompt fallback
-                let copied = false;
-
-                if ((navigator as any).share) {
-                  try {
-                    await (navigator as any).share({ title: "Host Link", url: host });
-                    copied = true; // ถือว่าแชร์สำเร็จ = ส่งต่อได้
-                  } catch {
-                    // ignore
-                  }
-                }
-
-                if (!copied) copied = await copyToClipboard(host);
+                // ไม่เรียก share sheet แล้ว: คัดลอกลิงก์ Viewer โดยตรง
+                const copied = await copyToClipboard(viewer);
 
                 if (!copied) {
-                  // ✅ fallback ที่ชัวร์สุดบน iPhone: ให้ผู้ใช้กดค้าง copy เอง
-                  window.prompt("คัดลอกลิงก์ Host:", host);
+                  window.prompt("คัดลอกลิงก์ Viewer:", viewer);
                 } else {
-                  setToast({ id: nanoid(), kind: "success", message: "คัดลอก/แชร์ลิงก์ Host แล้ว" });
+                  setToast({ id: nanoid(), kind: "success", message: "คัดลอกลิงก์ Viewer แล้ว" });
                 }
 
                 history.pushState({}, "", `/h/${sessionId}?secret=${encodeURIComponent(secret)}`);
@@ -102,7 +90,7 @@ export function Landing() {
               }
             }}
           >
-            Create & Copy Host Link
+            Create & Copy Viewer Link
           </Button>
           <div className="text-xs text-slate-500">
             Tip: Host link includes secret; viewer link doesn’t. Only the host device (anonymous UID) can write.

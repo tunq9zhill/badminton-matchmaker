@@ -145,6 +145,13 @@ export async function updateSessionCore(sessionId: string, patch: Partial<Sessio
   await updateDoc(doc(db, COL.sessions, sessionId), patch as any);
 }
 
+export async function updatePlayerAvatar(sessionId: string, playerId: string, avatarDataUrl?: string) {
+  await assertHost(sessionId);
+  await updateDoc(doc(db, COL.sessions, sessionId, COL.players, playerId), {
+    avatarDataUrl: avatarDataUrl ?? null,
+  });
+}
+
 export async function deletePlayer(sessionId: string, playerId: string) {
   await assertHost(sessionId);
   await deleteDoc(doc(db, COL.sessions, sessionId, COL.players, playerId));

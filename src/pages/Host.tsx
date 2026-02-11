@@ -10,7 +10,7 @@ import { nanoid } from "nanoid";
 import { useAppStore } from "../app/store";
 import {
   subscribeSession, subscribePlayers, subscribeTeams, subscribeCourts, subscribeMatches, subscribeRecentResults,
-  upsertPlayers, assertHost
+  upsertPlayers, assertHost, updatePlayerAvatar
 } from "../features/session/api";
 import type { Match, Player, Session, Team, Court } from "../app/types";
 import { buildViewerLink } from "../app/links";
@@ -35,6 +35,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
   const [playerName, setPlayerName] = useState("");
   const [showFinish, setShowFinish] = useState<{ match: Match } | null>(null);
   const [winnerTeamId, setWinnerTeamId] = useState<string>("");
+  const [uploadingPlayerId, setUploadingPlayerId] = useState<string | null>(null);
 
   const origin = location.origin;
   const viewerLink = buildViewerLink(origin, props.sessionId);
@@ -74,6 +75,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
   }, [players]);
 
   const isLocked = !!session?.locked;
+  const isMobile = typeof window !== "undefined" && window.matchMedia("(hover: none) and (pointer: coarse)").matches;
 
   const canStart = session && players.length >= 4 && teams.length === 0;
 
@@ -166,30 +168,123 @@ export function Host(props: { sessionId: string; secret?: string }) {
                 </form>
           )}
 
-          <div className="flex flex-wrap gap-2">
+          <div className="space-y-2">
             {players.map((p) => (
-                <span key={p.id} className="inline-flex items-center gap-2">
-                    <Chip>
-                    {p.name} · {p.stats.wins}-{p.stats.losses} ({p.stats.played})
-                    </Chip>
-
-                    {!isLocked && (
+              <div key={p.id} className="rounded-xl border border-slate-100 px-3 py-2">
+                <div className="flex items-center gap-3">
+                  {p.avatarDataUrl ? (
                     <button
-                        className="text-xs font-semibold text-rose-600"
-                        onClick={async () => {
-                        try {
-                            const { deletePlayer } = await import("../features/session/api");
-                            await deletePlayer(props.sessionId, p.id);
-                        } catch (e: any) {
-                            setToast({ id: nanoid(), kind: "error", message: e?.message ?? "ลบไม่สำเร็จ" });
-                        }
-                        }}
+                      type="button"
+                      onClick={() => window.open(p.avatarDataUrl, "_blank")}
+                      className="h-12 w-12 overflow-hidden rounded-full border border-slate-200"
+                      title="เปิดรูปโปรไฟล์"
                     >
-                        ลบ
+                      <img src={p.avatarDataUrl} alt={`avatar-${p.name}`} className="h-full w-full object-cover" />
                     </button>
+                  ) : (
+                    <div className="h-12 w-12 rounded-full border border-dashed border-slate-300 bg-slate-50" />
+                  )}
+
+                  <div className="min-w-0 flex-1">
+                    <div className="font-semibold truncate">{p.name}</div>
+                    <div className="text-xs text-slate-500">{p.stats.wins}-{p.stats.losses} ({p.stats.played})</div>
+                  </div>
+                </div>
+
+                {!isLocked && (
+                  <div className="mt-2 flex flex-wrap items-center gap-3 text-xs font-semibold">
+                    <label className="cursor-pointer text-slate-700">
+                      {isMobile ? "เลือกรูป" : "อัปโหลดรูป"}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        disabled={uploadingPlayerId === p.id}
+                        onChange={async (e) => {
+                          const f = e.target.files?.[0];
+                          e.currentTarget.value = "";
+                          if (!f) return;
+
+                          try {
+                            setUploadingPlayerId(p.id);
+                            const avatarDataUrl = await compressImageToDataUrl(f, 320, 0.78);
+                            await updatePlayerAvatar(props.sessionId, p.id, avatarDataUrl);
+                            setToast({ id: nanoid(), kind: "success", message: `อัปโหลดรูปของ ${p.name} แล้ว` });
+                          } catch (err: any) {
+                            setToast({ id: nanoid(), kind: "error", message: err?.message ?? "อัปโหลดรูปไม่สำเร็จ" });
+                          } finally {
+                            setUploadingPlayerId(null);
+                          }
+                        }}
+                      />
+                    </label>
+
+                    {isMobile && (
+                      <label className="cursor-pointer text-slate-700">
+                        เปิดกล้อง
+                        <input
+                          type="file"
+                          accept="image/*"
+                          capture="environment"
+                          className="hidden"
+                          disabled={uploadingPlayerId === p.id}
+                          onChange={async (e) => {
+                            const f = e.target.files?.[0];
+                            e.currentTarget.value = "";
+                            if (!f) return;
+
+                            try {
+                              setUploadingPlayerId(p.id);
+                              const avatarDataUrl = await compressImageToDataUrl(f, 320, 0.78);
+                              await updatePlayerAvatar(props.sessionId, p.id, avatarDataUrl);
+                              setToast({ id: nanoid(), kind: "success", message: `อัปโหลดรูปของ ${p.name} แล้ว` });
+                            } catch (err: any) {
+                              setToast({ id: nanoid(), kind: "error", message: err?.message ?? "อัปโหลดรูปไม่สำเร็จ" });
+                            } finally {
+                              setUploadingPlayerId(null);
+                            }
+                          }}
+                        />
+                      </label>
                     )}
-                </span>
-                ))}
+
+                    {p.avatarDataUrl && (
+                      <button
+                        className="text-amber-700"
+                        disabled={uploadingPlayerId === p.id}
+                        onClick={async () => {
+                          try {
+                            setUploadingPlayerId(p.id);
+                            await updatePlayerAvatar(props.sessionId, p.id, undefined);
+                            setToast({ id: nanoid(), kind: "success", message: `ลบรูปของ ${p.name} แล้ว` });
+                          } catch (e: any) {
+                            setToast({ id: nanoid(), kind: "error", message: e?.message ?? "ลบรูปไม่สำเร็จ" });
+                          } finally {
+                            setUploadingPlayerId(null);
+                          }
+                        }}
+                      >
+                        ลบรูป
+                      </button>
+                    )}
+
+                    <button
+                      className="text-rose-600"
+                      onClick={async () => {
+                        try {
+                          const { deletePlayer } = await import("../features/session/api");
+                          await deletePlayer(props.sessionId, p.id);
+                        } catch (e: any) {
+                          setToast({ id: nanoid(), kind: "error", message: e?.message ?? "ลบไม่สำเร็จ" });
+                        }
+                      }}
+                    >
+                      ลบผู้เล่น
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
             {players.length === 0 && <div className="text-sm text-slate-500">No players yet.</div>}
           </div>
 
@@ -287,7 +382,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
                 {m ? (
                   <div className="mt-2 text-sm">
                     <div className="font-semibold">
-                      {formatTeam(a, playerById)} <span className="text-slate-400">vs</span> {formatTeam(b, playerById)}
+                      <div className="space-y-1"><TeamLine team={a} playerById={playerById} /><div className="text-slate-400">vs</div><TeamLine team={b} playerById={playerById} /></div>
                       {m.isFallback ? <span className="ml-2 text-xs text-amber-700">(fallback)</span> : null}
                     </div>
 
@@ -345,7 +440,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
               if (!t) return null;
               return (
                 <div key={tid} className="rounded-xl border border-slate-100 px-3 py-2">
-                  <div className="font-semibold">{formatTeam(t, playerById)}</div>
+                  <TeamLine team={t} playerById={playerById} />
                   <div className="text-xs text-slate-500">
                     played {t.stats.played} · W {t.stats.wins} · L {t.stats.losses}
                     {t.playerIds.length === 3 ? " · (3-player team)" : ""}
@@ -370,7 +465,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
               <div key={r.id} className="rounded-xl border border-slate-100 px-3 py-2 text-sm">
                 <div className="text-xs text-slate-500">Court {r.courtId}</div>
                 <div className="font-semibold">
-                  {formatTeam(ta, playerById)} vs {formatTeam(tb, playerById)}
+                  <TeamLine team={ta} playerById={playerById} /> <span className="text-slate-400">vs</span> <TeamLine team={tb} playerById={playerById} />
                 </div>
                 <div className="text-xs text-slate-600">
                   Winner: {win === r.teamAId ? formatTeam(ta, playerById) : formatTeam(tb, playerById)}
@@ -443,6 +538,59 @@ export function Host(props: { sessionId: string; secret?: string }) {
 )}
     </div>
     
+  );
+}
+
+async function compressImageToDataUrl(file: File, maxEdge = 320, quality = 0.8): Promise<string> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("อ่านไฟล์รูปไม่สำเร็จ"));
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.readAsDataURL(file);
+  });
+
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onerror = () => reject(new Error("โหลดรูปไม่สำเร็จ"));
+    image.onload = () => resolve(image);
+    image.src = dataUrl;
+  });
+
+  const scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
+  const width = Math.max(1, Math.round(img.width * scale));
+  const height = Math.max(1, Math.round(img.height * scale));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("ไม่สามารถประมวลผลรูปได้");
+  ctx.drawImage(img, 0, 0, width, height);
+
+  return canvas.toDataURL("image/jpeg", quality);
+}
+
+function TeamLine(props: { team: Team | undefined; playerById: (id: string) => Player | undefined }) {
+  if (!props.team) return <div className="font-semibold">—</div>;
+
+  return (
+    <div className="flex flex-wrap items-center gap-1 font-semibold">
+      {props.team.playerIds.map((id, idx) => {
+        const p = props.playerById(id);
+        return (
+          <div key={id} className="inline-flex items-center gap-1">
+            {p?.avatarDataUrl ? (
+              <img src={p.avatarDataUrl} alt={`avatar-${p.name}`} className="h-6 w-6 rounded-full object-cover border border-slate-200" />
+            ) : (
+              <div className="h-6 w-6 rounded-full border border-dashed border-slate-300 bg-slate-50" />
+            )}
+            <span>{p?.name ?? "?"}</span>
+            {idx < props.team!.playerIds.length - 1 && <span className="text-slate-400">+</span>}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
