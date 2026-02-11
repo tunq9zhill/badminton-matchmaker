@@ -10,7 +10,7 @@ import { nanoid } from "nanoid";
 import { useAppStore } from "../app/store";
 import {
   subscribeSession, subscribePlayers, subscribeTeams, subscribeCourts, subscribeMatches, subscribeRecentResults,
-  upsertPlayers, assertHost
+  upsertPlayers, assertHost, updatePlayerAvatar
 } from "../features/session/api";
 import type { Match, Player, Session, Team, Court } from "../app/types";
 import { buildViewerLink } from "../app/links";
@@ -35,6 +35,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
   const [playerName, setPlayerName] = useState("");
   const [showFinish, setShowFinish] = useState<{ match: Match } | null>(null);
   const [winnerTeamId, setWinnerTeamId] = useState<string>("");
+  const [uploadingPlayerId, setUploadingPlayerId] = useState<string | null>(null);
 
   const origin = location.origin;
   const viewerLink = buildViewerLink(origin, props.sessionId);
@@ -166,30 +167,94 @@ export function Host(props: { sessionId: string; secret?: string }) {
                 </form>
           )}
 
-          <div className="flex flex-wrap gap-2">
+          <div className="space-y-2">
             {players.map((p) => (
-                <span key={p.id} className="inline-flex items-center gap-2">
-                    <Chip>
-                    {p.name} · {p.stats.wins}-{p.stats.losses} ({p.stats.played})
-                    </Chip>
-
-                    {!isLocked && (
+              <div key={p.id} className="rounded-xl border border-slate-100 px-3 py-2">
+                <div className="flex items-center gap-3">
+                  {p.avatarDataUrl ? (
                     <button
-                        className="text-xs font-semibold text-rose-600"
-                        onClick={async () => {
-                        try {
-                            const { deletePlayer } = await import("../features/session/api");
-                            await deletePlayer(props.sessionId, p.id);
-                        } catch (e: any) {
-                            setToast({ id: nanoid(), kind: "error", message: e?.message ?? "ลบไม่สำเร็จ" });
-                        }
-                        }}
+                      type="button"
+                      onClick={() => window.open(p.avatarDataUrl, "_blank")}
+                      className="h-12 w-12 overflow-hidden rounded-full border border-slate-200"
+                      title="เปิดรูปโปรไฟล์"
                     >
-                        ลบ
+                      <img src={p.avatarDataUrl} alt={`avatar-${p.name}`} className="h-full w-full object-cover" />
                     </button>
+                  ) : (
+                    <div className="h-12 w-12 rounded-full border border-dashed border-slate-300 bg-slate-50" />
+                  )}
+
+                  <div className="min-w-0 flex-1">
+                    <div className="font-semibold truncate">{p.name}</div>
+                    <div className="text-xs text-slate-500">{p.stats.wins}-{p.stats.losses} ({p.stats.played})</div>
+                  </div>
+                </div>
+
+                {!isLocked && (
+                  <div className="mt-2 flex flex-wrap items-center gap-3 text-xs font-semibold">
+                    <label className="cursor-pointer text-slate-700">
+                      อัปโหลดรูป
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        disabled={uploadingPlayerId === p.id}
+                        onChange={async (e) => {
+                          const f = e.target.files?.[0];
+                          e.currentTarget.value = "";
+                          if (!f) return;
+
+                          try {
+                            setUploadingPlayerId(p.id);
+                            const avatarDataUrl = await compressImageToDataUrl(f, 320, 0.78);
+                            await updatePlayerAvatar(props.sessionId, p.id, avatarDataUrl);
+                            setToast({ id: nanoid(), kind: "success", message: `อัปโหลดรูปของ ${p.name} แล้ว` });
+                          } catch (err: any) {
+                            setToast({ id: nanoid(), kind: "error", message: err?.message ?? "อัปโหลดรูปไม่สำเร็จ" });
+                          } finally {
+                            setUploadingPlayerId(null);
+                          }
+                        }}
+                      />
+                    </label>
+
+                    {p.avatarDataUrl && (
+                      <button
+                        className="text-amber-700"
+                        disabled={uploadingPlayerId === p.id}
+                        onClick={async () => {
+                          try {
+                            setUploadingPlayerId(p.id);
+                            await updatePlayerAvatar(props.sessionId, p.id, undefined);
+                            setToast({ id: nanoid(), kind: "success", message: `ลบรูปของ ${p.name} แล้ว` });
+                          } catch (e: any) {
+                            setToast({ id: nanoid(), kind: "error", message: e?.message ?? "ลบรูปไม่สำเร็จ" });
+                          } finally {
+                            setUploadingPlayerId(null);
+                          }
+                        }}
+                      >
+                        ลบรูป
+                      </button>
                     )}
-                </span>
-                ))}
+
+                    <button
+                      className="text-rose-600"
+                      onClick={async () => {
+                        try {
+                          const { deletePlayer } = await import("../features/session/api");
+                          await deletePlayer(props.sessionId, p.id);
+                        } catch (e: any) {
+                          setToast({ id: nanoid(), kind: "error", message: e?.message ?? "ลบไม่สำเร็จ" });
+                        }
+                      }}
+                    >
+                      ลบผู้เล่น
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
             {players.length === 0 && <div className="text-sm text-slate-500">No players yet.</div>}
           </div>
 
@@ -444,6 +509,36 @@ export function Host(props: { sessionId: string; secret?: string }) {
     </div>
     
   );
+}
+
+async function compressImageToDataUrl(file: File, maxEdge = 320, quality = 0.8): Promise<string> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("อ่านไฟล์รูปไม่สำเร็จ"));
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.readAsDataURL(file);
+  });
+
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onerror = () => reject(new Error("โหลดรูปไม่สำเร็จ"));
+    image.onload = () => resolve(image);
+    image.src = dataUrl;
+  });
+
+  const scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
+  const width = Math.max(1, Math.round(img.width * scale));
+  const height = Math.max(1, Math.round(img.height * scale));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("ไม่สามารถประมวลผลรูปได้");
+  ctx.drawImage(img, 0, 0, width, height);
+
+  return canvas.toDataURL("image/jpeg", quality);
 }
 
 function formatTeam(team: Team | undefined, playerById: (id: string) => Player | undefined) {
