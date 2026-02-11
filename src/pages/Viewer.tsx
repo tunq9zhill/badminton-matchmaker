@@ -55,12 +55,12 @@ export function Viewer(props: { sessionId: string }) {
 
       <Card>
         <CardHeader title="Players (from Host)" />
-        <CardBody className="space-y-2">
+        <CardBody className="space-y-2 max-h-64">
           {players.map((p) => (
             <div key={p.id} className="rounded-xl border border-slate-100 px-3 py-2 text-sm">
               <PlayerIdentity player={p} onOpenImage={(url: string) => setSelectedImage({ name: p.name, url })} />
               <div className="text-xs text-slate-500 mt-1">W {p.stats.wins} · L {p.stats.losses} · played {p.stats.played}</div>
-              <div className="flex items-center gap-3">
+              {/* <div className="flex items-center gap-3">
                 {p.avatarDataUrl ? (
                   <button
                     type="button"
@@ -77,7 +77,7 @@ export function Viewer(props: { sessionId: string }) {
                   <div className="font-semibold">{p.name}</div>
                   <div className="text-xs text-slate-500">W {p.stats.wins} · L {p.stats.losses} · played {p.stats.played}</div>
                 </div>
-              </div>
+              </div> */}
             </div>
           ))}
           {players.length === 0 && <div className="text-sm text-slate-500">No players yet.</div>}
@@ -100,7 +100,7 @@ export function Viewer(props: { sessionId: string }) {
                   </Chip>
                 </div>
                 {m ? (
-                  <div className="mt-2 text-sm font-semibold space-y-2">
+                  <div className="mt-2 text-sm font-semibold flex flex-wrap gap-5">
                     <TeamLine team={a} playerById={playerById} onOpenImage={(name: string, url: string) => setSelectedImage({ name, url })} />
                     <div className="text-slate-400 text-center">vs</div>
                     <TeamLine team={b} playerById={playerById} onOpenImage={(name: string, url: string) => setSelectedImage({ name, url })} />
