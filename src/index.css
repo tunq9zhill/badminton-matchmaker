@@ -15,3 +15,11 @@ html, body, #root {
 * {
   -webkit-tap-highlight-color: transparent;
 }
+
+@media (hover: none) and (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
