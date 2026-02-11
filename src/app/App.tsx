@@ -6,6 +6,7 @@ import { Viewer } from "../pages/Viewer";
 import { NotFound } from "../pages/NotFound";
 import { Toast } from "../ui/Toast";
 import { useAppStore } from "./store";
+import { PwaInstallPrompt } from "../ui/PwaInstallPrompt";
 
 export function App() {
   const [route, setRoute] = useState<Route>(() => parseRoute(location.pathname, location.search));
@@ -28,6 +29,7 @@ export function App() {
     <div className="min-h-full bg-slate-50 text-slate-900">
       {page}
       {toast && <Toast toast={toast} />}
+      <PwaInstallPrompt />
     </div>
   );
 }
