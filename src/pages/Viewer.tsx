@@ -3,6 +3,7 @@ import { ensureAnonAuth } from "../app/firebase";
 import { useFirestoreConnectionPing } from "../app/connection";
 import { Card, CardBody, CardHeader } from "../ui/Card";
 import { Chip } from "../ui/Chip";
+import { Modal } from "../ui/Modal";
 import {
   subscribeSession, subscribePlayers, subscribeTeams, subscribeCourts, subscribeMatches, subscribeRecentResults
 } from "../features/session/api";
@@ -18,6 +19,7 @@ export function Viewer(props: { sessionId: string }) {
   const [courts, setCourts] = useState<Court[]>([]);
   const [matches, setMatches] = useState<Match[]>([]);
   const [results, setResults] = useState<any[]>([]);
+  const [selectedImage, setSelectedImage] = useState<{ name: string; url: string } | null>(null);
 
   useEffect(() => { ensureAnonAuth().catch(()=>{}); }, []);
   useEffect(() => subscribeSession(props.sessionId, setSession), [props.sessionId]);
@@ -52,6 +54,19 @@ export function Viewer(props: { sessionId: string }) {
       </div>
 
       <Card>
+        <CardHeader title="Players (from Host)" />
+        <CardBody className="space-y-2">
+          {players.map((p) => (
+            <div key={p.id} className="rounded-xl border border-slate-100 px-3 py-2 text-sm">
+              <PlayerIdentity player={p} onOpenImage={(url: string) => setSelectedImage({ name: p.name, url })} />
+              <div className="text-xs text-slate-500 mt-1">W {p.stats.wins} · L {p.stats.losses} · played {p.stats.played}</div>
+            </div>
+          ))}
+          {players.length === 0 && <div className="text-sm text-slate-500">No players yet.</div>}
+        </CardBody>
+      </Card>
+
+      <Card>
         <CardHeader title="Courts" />
         <CardBody className="space-y-3">
           {courts.map((c) => {
@@ -67,9 +82,11 @@ export function Viewer(props: { sessionId: string }) {
                   </Chip>
                 </div>
                 {m ? (
-                  <div className="mt-2 text-sm font-semibold">
-                    {fmtTeam(a, playerById)} <span className="text-slate-400">vs</span> {fmtTeam(b, playerById)}
-                    {m.isFallback ? <span className="ml-2 text-xs text-amber-700">(fallback)</span> : null}
+                  <div className="mt-2 text-sm font-semibold space-y-2">
+                    <TeamLine team={a} playerById={playerById} onOpenImage={(name: string, url: string) => setSelectedImage({ name, url })} />
+                    <div className="text-slate-400 text-center">vs</div>
+                    <TeamLine team={b} playerById={playerById} onOpenImage={(name: string, url: string) => setSelectedImage({ name, url })} />
+                    {m.isFallback ? <span className="text-xs text-amber-700">(fallback)</span> : null}
                   </div>
                 ) : (
                   <div className="mt-2 text-sm text-slate-500">Waiting for a valid match…</div>
@@ -87,7 +104,7 @@ export function Viewer(props: { sessionId: string }) {
             const t = teamById.get(tid);
             return (
               <div key={tid} className="rounded-xl border border-slate-100 px-3 py-2">
-                <div className="font-semibold">{fmtTeam(t, playerById)}</div>
+                <TeamLine team={t} playerById={playerById} onOpenImage={(name: string, url: string) => setSelectedImage({ name, url })} />
                 <div className="text-xs text-slate-500">played {t?.stats.played ?? 0}</div>
               </div>
             );
@@ -101,7 +118,7 @@ export function Viewer(props: { sessionId: string }) {
         <CardBody className="space-y-2">
           {leaderboard.map((t) => (
             <div key={t.id} className="rounded-xl border border-slate-100 px-3 py-2 text-sm">
-              <div className="font-semibold">{fmtTeam(t, playerById)}</div>
+              <TeamLine team={t} playerById={playerById} onOpenImage={(name: string, url: string) => setSelectedImage({ name, url })} />
               <div className="text-xs text-slate-500">W {t.stats.wins} · L {t.stats.losses} · played {t.stats.played}</div>
             </div>
           ))}
@@ -119,12 +136,13 @@ export function Viewer(props: { sessionId: string }) {
             return (
               <div key={r.id} className="rounded-xl border border-slate-100 px-3 py-2 text-sm">
                 <div className="text-xs text-slate-500">Court {r.courtId}</div>
-                <div className="font-semibold">{fmtTeam(ta, playerById)} vs {fmtTeam(tb, playerById)}</div>
-                <div className="text-xs text-slate-600">
+                <TeamLine team={ta} playerById={playerById} onOpenImage={(name: string, url: string) => setSelectedImage({ name, url })} />
+                <div className="text-center text-slate-400">vs</div>
+                <TeamLine team={tb} playerById={playerById} onOpenImage={(name: string, url: string) => setSelectedImage({ name, url })} />
+                <div className="text-xs text-slate-600 mt-1">
                   Winner: {win === r.teamAId ? fmtTeam(ta, playerById) : fmtTeam(tb, playerById)}
                   {r.isFallback ? " · fallback" : ""}
-                  <span className="font-semibold"> {winnerLoserScore(r) ? `(${winnerLoserScore(r)})` : ""}
-                  </span>
+                  <span className="font-semibold"> {winnerLoserScore(r) ? `(${winnerLoserScore(r)})` : ""}</span>
                 </div>
               </div>
             );
@@ -132,6 +150,57 @@ export function Viewer(props: { sessionId: string }) {
           {results.length === 0 && <div className="text-sm text-slate-500">No results yet.</div>}
         </CardBody>
       </Card>
+
+      {selectedImage && (
+        <Modal title={selectedImage.name} onClose={() => setSelectedImage(null)}>
+          <div className="flex justify-center">
+            <img src={selectedImage.url} alt={selectedImage.name} className="max-h-[70vh] w-auto rounded-xl border border-slate-200" />
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function TeamLine(props: {
+  team: Team | undefined;
+  playerById: Map<string, Player>;
+  onOpenImage: (name: string, url: string) => void;
+}) {
+  if (!props.team) return <div className="font-semibold">—</div>;
+
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      {props.team.playerIds.map((id, i) => {
+        const p = props.playerById.get(id);
+        if (!p) return <span key={id} className="font-semibold">?</span>;
+        return (
+          <div key={id} className="inline-flex items-center gap-1">
+            <PlayerIdentity player={p} compact onOpenImage={(url) => props.onOpenImage(p.name, url)} />
+            {i < props.team!.playerIds.length - 1 && <span className="text-slate-400">+</span>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function PlayerIdentity(props: { player: Player; compact?: boolean; onOpenImage: (url: string) => void }) {
+  const avatarSize = props.compact ? "h-6 w-6" : "h-10 w-10";
+  return (
+    <div className="inline-flex items-center gap-2">
+      {props.player.avatarDataUrl ? (
+        <button
+          type="button"
+          className={`${avatarSize} overflow-hidden rounded-full border border-slate-200`}
+          onClick={() => props.onOpenImage(props.player.avatarDataUrl!)}
+        >
+          <img src={props.player.avatarDataUrl} alt={`avatar-${props.player.name}`} className="h-full w-full object-cover" />
+        </button>
+      ) : (
+        <div className={`${avatarSize} rounded-full border border-dashed border-slate-300 bg-slate-50`} />
+      )}
+      <span className="font-semibold">{props.player.name}</span>
     </div>
   );
 }
