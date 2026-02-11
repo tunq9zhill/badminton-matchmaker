@@ -28,6 +28,7 @@ export type Player = {
   name: string;
   stats: { played: number; wins: number; losses: number };
   playHistory?: number[]; // เก็บ timestamp (endedAt) ทุกครั้งที่ได้เล่น
+  avatarDataUrl?: string; // optional profile image (compressed data URL)
 };
 
 export type Team = {
