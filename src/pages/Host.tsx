@@ -289,43 +289,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
           </div>
         </CardBody>
       </Card>
-<Card>
-  <CardHeader title="รีเซ็ต" />
-  <CardBody className="space-y-2">
-    <Button
-      variant="secondary"
-      disabled={!isLocked}
-      onClick={async () => {
-        try {
-          const { resetPairing } = await import("../features/session/mutations");
-          const r = await resetPairing(props.sessionId);
-          setToast({ id: nanoid(), kind: "success", message: r.warnings?.[0] ?? "รีเซ็ตทีมใหม่แล้ว" });
-          // assign initial matches again
-          for (const c of courts) await assignNextForCourt(props.sessionId, c.id);
-        } catch (e: any) {
-          setToast({ id: nanoid(), kind: "error", message: e?.message ?? "รีเซ็ตทีมไม่สำเร็จ" });
-        }
-      }}
-    >
-      Reset Pairing (ไม่รีเซ็ตสถิติผู้เล่น)
-    </Button>
 
-    <Button
-      variant="danger"
-      onClick={async () => {
-        try {
-          const { resetAll } = await import("../features/session/mutations");
-          await resetAll(props.sessionId, true);
-          setToast({ id: nanoid(), kind: "success", message: "รีเซ็ตทั้งหมดแล้ว (เก็บรายชื่อ)" });
-        } catch (e: any) {
-          setToast({ id: nanoid(), kind: "error", message: e?.message ?? "รีเซ็ตทั้งหมดไม่สำเร็จ" });
-        }
-      }}
-    >
-      Reset All (เก็บรายชื่อ)
-    </Button>
-  </CardBody>
-</Card>
 
       <Card>
         <CardHeader title="Courts" />
@@ -347,22 +311,12 @@ export function Host(props: { sessionId: string; secret?: string }) {
                 {m ? (
                   <div className="mt-2 text-sm">
                     <div className="font-semibold">
-                      <div className="space-y-1"><TeamLine team={a} playerById={playerById} /><div className="text-slate-400">vs</div><TeamLine team={b} playerById={playerById} /></div>
+                      <div className=" mt-2 text-sm font-semibold flex flex-wrap gap-5"><TeamLine team={a} playerById={playerById} /><div className="text-slate-400">vs</div><TeamLine team={b} playerById={playerById} /></div>
                       {m.isFallback ? <span className="ml-2 text-xs text-amber-700">(fallback)</span> : null}
                     </div>
 
                     <div className="mt-2 grid grid-cols-2 gap-2">
-                        <Button
-                            variant="primary"
-                            disabled={m.status === "finished" || m.status === "canceled"}
-                            onClick={() => {
-                            setWinnerTeamId(m.teamAId);
-                            setShowFinish({ match: m });
-                            }}
-                        >
-                            Finish
-                        </Button>
-
+                        
                         <Button
                             variant="danger"
                             onClick={async () => {
@@ -373,6 +327,17 @@ export function Host(props: { sessionId: string; secret?: string }) {
                             }}
                         >
                             Cancel
+                        </Button>
+                        
+                        <Button
+                            variant="primary"
+                            disabled={m.status === "finished" || m.status === "canceled"}
+                            onClick={() => {
+                            setWinnerTeamId(m.teamAId);
+                            setShowFinish({ match: m });
+                            }}
+                        >
+                            Finish
                         </Button>
                     </div>
                   </div>
@@ -445,7 +410,44 @@ export function Host(props: { sessionId: string; secret?: string }) {
           {results.length === 0 && <div className="text-sm text-slate-500">No results yet.</div>}
         </CardBody>
       </Card>
+      
+      <Card>
+        <CardHeader title="รีเซ็ต" />
+        <CardBody className="space-y-2">
+          <Button
+            variant="secondary"
+            disabled={!isLocked}
+            onClick={async () => {
+              try {
+                const { resetPairing } = await import("../features/session/mutations");
+                const r = await resetPairing(props.sessionId);
+                setToast({ id: nanoid(), kind: "success", message: r.warnings?.[0] ?? "รีเซ็ตทีมใหม่แล้ว" });
+                // assign initial matches again
+                for (const c of courts) await assignNextForCourt(props.sessionId, c.id);
+              } catch (e: any) {
+                setToast({ id: nanoid(), kind: "error", message: e?.message ?? "รีเซ็ตทีมไม่สำเร็จ" });
+              }
+            }}
+          >
+            Reset Pairing (ไม่รีเซ็ตสถิติผู้เล่น)
+          </Button>
 
+          <Button
+            variant="danger"
+            onClick={async () => {
+              try {
+                const { resetAll } = await import("../features/session/mutations");
+                await resetAll(props.sessionId, true);
+                setToast({ id: nanoid(), kind: "success", message: "รีเซ็ตทั้งหมดแล้ว (เก็บรายชื่อ)" });
+              } catch (e: any) {
+                setToast({ id: nanoid(), kind: "error", message: e?.message ?? "รีเซ็ตทั้งหมดไม่สำเร็จ" });
+              }
+            }}
+          >
+            Reset All (เก็บรายชื่อ)
+          </Button>
+        </CardBody>
+      </Card>
       {showFinish && (
         
         <FinishModal
