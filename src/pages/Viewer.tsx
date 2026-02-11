@@ -52,6 +52,19 @@ export function Viewer(props: { sessionId: string }) {
       </div>
 
       <Card>
+        <CardHeader title="Players (from Host)" />
+        <CardBody className="space-y-2">
+          {players.map((p) => (
+            <div key={p.id} className="rounded-xl border border-slate-100 px-3 py-2 text-sm">
+              <div className="font-semibold">{p.name}</div>
+              <div className="text-xs text-slate-500">W {p.stats.wins} · L {p.stats.losses} · played {p.stats.played}</div>
+            </div>
+          ))}
+          {players.length === 0 && <div className="text-sm text-slate-500">No players yet.</div>}
+        </CardBody>
+      </Card>
+
+      <Card>
         <CardHeader title="Courts" />
         <CardBody className="space-y-3">
           {courts.map((c) => {
