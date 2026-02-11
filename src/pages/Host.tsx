@@ -161,6 +161,94 @@ export function Host(props: { sessionId: string; secret?: string }) {
           )}
 
           <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+            {players.map((p) => (
+              <div key={p.id} className="rounded-xl border border-slate-100 px-3 py-2">
+                <div className="flex items-center gap-3">
+                  {p.avatarDataUrl ? (
+                    <button
+                      type="button"
+                      onClick={() => window.open(p.avatarDataUrl, "_blank")}
+                      className="h-12 w-12 overflow-hidden rounded-full border border-slate-200"
+                      title="เปิดรูปโปรไฟล์"
+                    >
+                      <img src={p.avatarDataUrl} alt={`avatar-${p.name}`} className="h-full w-full object-cover" />
+                    </button>
+                  ) : (
+                    <div className="h-12 w-12 rounded-full border border-dashed border-slate-300 bg-slate-50" />
+                  )}
+
+                  <div className="min-w-0 flex-1">
+                    <div className="font-semibold truncate">{p.name}</div>
+                    <div className="text-xs text-slate-500">{p.stats.wins}-{p.stats.losses} ({p.stats.played})</div>
+                  </div>
+                </div>
+
+                {!isLocked && (
+                  <div className="mt-2 flex flex-wrap items-center gap-3 text-xs font-semibold">
+                    <label className="cursor-pointer text-slate-700">
+                      อัปโหลดรูป
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        disabled={uploadingPlayerId === p.id}
+                        onChange={async (e) => {
+                          const f = e.target.files?.[0];
+                          e.currentTarget.value = "";
+                          if (!f) return;
+
+                          try {
+                            setUploadingPlayerId(p.id);
+                            const avatarDataUrl = await compressImageToDataUrl(f, 320, 0.78);
+                            await updatePlayerAvatar(props.sessionId, p.id, avatarDataUrl);
+                            setToast({ id: nanoid(), kind: "success", message: `อัปโหลดรูปของ ${p.name} แล้ว` });
+                          } catch (err: any) {
+                            setToast({ id: nanoid(), kind: "error", message: err?.message ?? "อัปโหลดรูปไม่สำเร็จ" });
+                          } finally {
+                            setUploadingPlayerId(null);
+                          }
+                        }}
+                      />
+                    </label>
+
+                    {p.avatarDataUrl && (
+                      <button
+                        className="text-amber-700"
+                        disabled={uploadingPlayerId === p.id}
+                        onClick={async () => {
+                          try {
+                            setUploadingPlayerId(p.id);
+                            await updatePlayerAvatar(props.sessionId, p.id, undefined);
+                            setToast({ id: nanoid(), kind: "success", message: `ลบรูปของ ${p.name} แล้ว` });
+                          } catch (e: any) {
+                            setToast({ id: nanoid(), kind: "error", message: e?.message ?? "ลบรูปไม่สำเร็จ" });
+                          } finally {
+                            setUploadingPlayerId(null);
+                          }
+                        }}
+                      >
+                        ลบรูป
+                      </button>
+                    )}
+
+                    <button
+                      className="text-rose-600"
+                      onClick={async () => {
+                        try {
+                          const { deletePlayer } = await import("../features/session/api");
+                          await deletePlayer(props.sessionId, p.id);
+                        } catch (e: any) {
+                          setToast({ id: nanoid(), kind: "error", message: e?.message ?? "ลบไม่สำเร็จ" });
+                        }
+                      }}
+                    >
+                      ลบผู้เล่น
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+            {players.length === 0 && <div className="text-sm text-slate-500">No players yet.</div>}
             <div className="space-y-2">
               {players.map((p) => (
                 <div key={p.id} className="rounded-xl border border-slate-100 px-3 py-2">
