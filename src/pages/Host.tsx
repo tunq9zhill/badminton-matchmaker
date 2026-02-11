@@ -17,7 +17,6 @@ import { buildViewerLink } from "../app/links";
 import { buildInitialTeams } from "../engine/pairing";
 import { setTeamsAndQueue, assignNextForCourt, finishMatch, startOnce } from "../features/session/mutations";
 import { Modal } from "../ui/Modal";
-import { useI18n } from "../app/i18n";
 import type { ResultRow } from "../features/session/schema";
 
 export function Host(props: { sessionId: string; secret?: string }) {
@@ -40,13 +39,6 @@ export function Host(props: { sessionId: string; secret?: string }) {
   const origin = location.origin;
   const viewerLink = buildViewerLink(origin, props.sessionId);
   // const hostLink = buildHostLink(origin, props.sessionId, props.secret ?? "");
-  const { lang, setLang } = useI18n();
-    <button
-    className="text-xs font-semibold text-slate-700"
-    onClick={() => setLang(lang === "th" ? "en" : "th")}
-    >
-    {lang === "th" ? "TH" : "EN"}
-    </button>
 
   useEffect(() => {
     ensureAnonAuth().catch(() => {});
@@ -75,6 +67,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
   }, [players]);
 
   const isLocked = !!session?.locked;
+  const isMobile = typeof window !== "undefined" && window.matchMedia("(hover: none) and (pointer: coarse)").matches;
 
   const canStart = session && players.length >= 4 && teams.length === 0;
 
@@ -122,7 +115,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
 
       <Card>
         <CardHeader title="Players" right={isLocked ? <Chip>Locked</Chip> : <Chip tone="warn">Editable</Chip>} />
-        <CardBody className="space-y-3">
+        <CardBody className="space-y-3 overflow-visible">
           {!isLocked && (
             <form
                 className="flex gap-2"
@@ -167,6 +160,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
                 </form>
           )}
 
+          <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
           <div className="space-y-2">
             {players.map((p) => (
               <div key={p.id} className="rounded-xl border border-slate-100 px-3 py-2">
@@ -193,6 +187,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
                 {!isLocked && (
                   <div className="mt-2 flex flex-wrap items-center gap-3 text-xs font-semibold">
                     <label className="cursor-pointer text-slate-700">
+                      {isMobile ? "เลือกรูป" : "อัปโหลดรูป"}
                       อัปโหลดรูป
                       <input
                         type="file"
@@ -217,6 +212,35 @@ export function Host(props: { sessionId: string; secret?: string }) {
                         }}
                       />
                     </label>
+
+                    {isMobile && (
+                      <label className="cursor-pointer text-slate-700">
+                        เปิดกล้อง
+                        <input
+                          type="file"
+                          accept="image/*"
+                          capture="environment"
+                          className="hidden"
+                          disabled={uploadingPlayerId === p.id}
+                          onChange={async (e) => {
+                            const f = e.target.files?.[0];
+                            e.currentTarget.value = "";
+                            if (!f) return;
+
+                            try {
+                              setUploadingPlayerId(p.id);
+                              const avatarDataUrl = await compressImageToDataUrl(f, 320, 0.78);
+                              await updatePlayerAvatar(props.sessionId, p.id, avatarDataUrl);
+                              setToast({ id: nanoid(), kind: "success", message: `อัปโหลดรูปของ ${p.name} แล้ว` });
+                            } catch (err: any) {
+                              setToast({ id: nanoid(), kind: "error", message: err?.message ?? "อัปโหลดรูปไม่สำเร็จ" });
+                            } finally {
+                              setUploadingPlayerId(null);
+                            }
+                          }}
+                        />
+                      </label>
+                    )}
 
                     {p.avatarDataUrl && (
                       <button
@@ -352,7 +376,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
                 {m ? (
                   <div className="mt-2 text-sm">
                     <div className="font-semibold">
-                      {formatTeam(a, playerById)} <span className="text-slate-400">vs</span> {formatTeam(b, playerById)}
+                      <div className="space-y-1"><TeamLine team={a} playerById={playerById} /><div className="text-slate-400">vs</div><TeamLine team={b} playerById={playerById} /></div>
                       {m.isFallback ? <span className="ml-2 text-xs text-amber-700">(fallback)</span> : null}
                     </div>
 
@@ -410,7 +434,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
               if (!t) return null;
               return (
                 <div key={tid} className="rounded-xl border border-slate-100 px-3 py-2">
-                  <div className="font-semibold">{formatTeam(t, playerById)}</div>
+                  <TeamLine team={t} playerById={playerById} />
                   <div className="text-xs text-slate-500">
                     played {t.stats.played} · W {t.stats.wins} · L {t.stats.losses}
                     {t.playerIds.length === 3 ? " · (3-player team)" : ""}
@@ -435,7 +459,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
               <div key={r.id} className="rounded-xl border border-slate-100 px-3 py-2 text-sm">
                 <div className="text-xs text-slate-500">Court {r.courtId}</div>
                 <div className="font-semibold">
-                  {formatTeam(ta, playerById)} vs {formatTeam(tb, playerById)}
+                  <TeamLine team={ta} playerById={playerById} /> <span className="text-slate-400">vs</span> <TeamLine team={tb} playerById={playerById} />
                 </div>
                 <div className="text-xs text-slate-600">
                   Winner: {win === r.teamAId ? formatTeam(ta, playerById) : formatTeam(tb, playerById)}
@@ -539,6 +563,29 @@ async function compressImageToDataUrl(file: File, maxEdge = 320, quality = 0.8):
   ctx.drawImage(img, 0, 0, width, height);
 
   return canvas.toDataURL("image/jpeg", quality);
+}
+
+function TeamLine(props: { team: Team | undefined; playerById: (id: string) => Player | undefined }) {
+  if (!props.team) return <div className="font-semibold">—</div>;
+
+  return (
+    <div className="flex flex-wrap items-center gap-1 font-semibold">
+      {props.team.playerIds.map((id, idx) => {
+        const p = props.playerById(id);
+        return (
+          <div key={id} className="inline-flex items-center gap-1">
+            {p?.avatarDataUrl ? (
+              <img src={p.avatarDataUrl} alt={`avatar-${p.name}`} className="h-6 w-6 rounded-full object-cover border border-slate-200" />
+            ) : (
+              <div className="h-6 w-6 rounded-full border border-dashed border-slate-300 bg-slate-50" />
+            )}
+            <span>{p?.name ?? "?"}</span>
+            {idx < props.team!.playerIds.length - 1 && <span className="text-slate-400">+</span>}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 function formatTeam(team: Team | undefined, playerById: (id: string) => Player | undefined) {
@@ -698,7 +745,14 @@ function PickTwo(props: {
               }
             }}
           >
-            {props.playerById(id)?.name ?? "?"}
+            <span className="inline-flex items-center gap-2">
+              {props.playerById(id)?.avatarDataUrl ? (
+                <img src={props.playerById(id)?.avatarDataUrl} alt={`avatar-${props.playerById(id)?.name ?? id}`} className="h-5 w-5 rounded-full object-cover border border-slate-200" />
+              ) : (
+                <span className="h-5 w-5 rounded-full border border-dashed border-slate-300 bg-slate-50" />
+              )}
+              <span>{props.playerById(id)?.name ?? "?"}</span>
+            </span>
           </button>
         );
       })}
