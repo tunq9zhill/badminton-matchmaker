@@ -60,6 +60,24 @@ export function Viewer(props: { sessionId: string }) {
             <div key={p.id} className="rounded-xl border border-slate-100 px-3 py-2 text-sm">
               <PlayerIdentity player={p} onOpenImage={(url: string) => setSelectedImage({ name: p.name, url })} />
               <div className="text-xs text-slate-500 mt-1">W {p.stats.wins} · L {p.stats.losses} · played {p.stats.played}</div>
+              <div className="flex items-center gap-3">
+                {p.avatarDataUrl ? (
+                  <button
+                    type="button"
+                    className="h-10 w-10 overflow-hidden rounded-full border border-slate-200"
+                    onClick={() => setSelectedImage({ name: p.name, url: p.avatarDataUrl! })}
+                    title={`Open ${p.name} profile`}
+                  >
+                    <img src={p.avatarDataUrl} alt={`avatar-${p.name}`} className="h-full w-full object-cover" />
+                  </button>
+                ) : (
+                  <div className="h-10 w-10 rounded-full border border-dashed border-slate-300 bg-slate-50" />
+                )}
+                <div>
+                  <div className="font-semibold">{p.name}</div>
+                  <div className="text-xs text-slate-500">W {p.stats.wins} · L {p.stats.losses} · played {p.stats.played}</div>
+                </div>
+              </div>
             </div>
           ))}
           {players.length === 0 && <div className="text-sm text-slate-500">No players yet.</div>}

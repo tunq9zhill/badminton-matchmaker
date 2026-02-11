@@ -161,6 +161,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
           )}
 
           <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+          <div className="space-y-2">
             {players.map((p) => (
               <div key={p.id} className="rounded-xl border border-slate-100 px-3 py-2">
                 <div className="flex items-center gap-3">
@@ -187,6 +188,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
                   <div className="mt-2 flex flex-wrap items-center gap-3 text-xs font-semibold">
                     <label className="cursor-pointer text-slate-700">
                       {isMobile ? "เลือกรูป" : "อัปโหลดรูป"}
+                      อัปโหลดรูป
                       <input
                         type="file"
                         accept="image/*"
