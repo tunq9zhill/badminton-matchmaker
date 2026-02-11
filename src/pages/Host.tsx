@@ -195,6 +195,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
                   <div className="mt-2 flex flex-wrap items-center gap-3 text-xs font-semibold">
                     <label className="cursor-pointer text-slate-700">
                       {isMobile ? "เลือกรูป" : "อัปโหลดรูป"}
+                      อัปโหลดรูป
                       <input
                         type="file"
                         accept="image/*"
