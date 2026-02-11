@@ -385,7 +385,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
 
       <Card>
         <CardHeader title="Recent Results" />
-        <CardBody className="space-y-2">
+        <CardBody className="space-y-2 ">
           {results.map((r) => {
             const ta = teamById(r.teamAId);
             const tb = teamById(r.teamBId);
@@ -394,13 +394,13 @@ export function Host(props: { sessionId: string; secret?: string }) {
               
               <div key={r.id} className="rounded-xl border border-slate-100 px-3 py-2 text-sm">
                 <div className="text-xs text-slate-500">Court {r.courtId}</div>
-                <div className="font-semibold">
-                  <TeamLine team={ta} playerById={playerById} /> <span className="text-slate-400">vs</span> <TeamLine team={tb} playerById={playerById} />
-                </div>
+                  <div className="font-semibold mt-2 text-sm font-semibold flex flex-wrap gap-5">
+                    <TeamLine team={ta} playerById={playerById} /> <span className="text-slate-400">vs</span> <TeamLine team={tb} playerById={playerById} />
+                  </div>
                 <div className="text-xs text-slate-600">
                   Winner: {win === r.teamAId ? formatTeam(ta, playerById) : formatTeam(tb, playerById)}
                   {r.isFallback ? " · fallback" : ""}
-                  <span className="font-semibold"> {winnerLoserScore(r) ? `(${winnerLoserScore(r)})` : ""}
+                  <span className="font-semibold "> {winnerLoserScore(r) ? `(${winnerLoserScore(r)})` : ""}
                   </span>
                 </div>
                 
