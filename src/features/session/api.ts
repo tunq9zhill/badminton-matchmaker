@@ -1,4 +1,4 @@
-import { nanoid } from "nanoid";
+import { customAlphabet, nanoid } from "nanoid";
 import {
   collection, doc, setDoc, writeBatch,
   onSnapshot, query, orderBy, limit, getDoc, runTransaction, updateDoc
@@ -12,7 +12,8 @@ import { deleteDoc } from "firebase/firestore";
 
 export async function createSession(params: { courtCount: number; oddMode: "three_player_rotation" | "none" }) {
   const user = await ensureAnonAuth();
-  const sessionId = nanoid(10);
+  const sessionCodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const sessionId = customAlphabet(sessionCodeAlphabet, 6)();
   const secret = nanoid(24);
   const hostSecretHash = await sha256Base64(secret);
 

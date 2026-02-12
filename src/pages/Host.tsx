@@ -10,12 +10,11 @@ import { nanoid } from "nanoid";
 import { useAppStore } from "../app/store";
 import {
   subscribeSession, subscribePlayers, subscribeTeams, subscribeCourts, subscribeMatches, subscribeRecentResults,
-  upsertPlayers, assertHost, updatePlayerAvatar
+  upsertPlayers, assertHost, updatePlayerAvatar, updateSessionCore
 } from "../features/session/api";
 import type { Match, Player, Session, Team, Court } from "../app/types";
-import { buildViewerLink } from "../app/links";
 import { buildInitialTeams } from "../engine/pairing";
-import { setTeamsAndQueue, assignNextForCourt, finishMatch, startOnce } from "../features/session/mutations";
+import { setTeamsAndQueue, assignNextForCourt, finishMatch, startOnce, resetTableStats } from "../features/session/mutations";
 import { Modal } from "../ui/Modal";
 import type { ResultRow } from "../features/session/schema";
 
@@ -35,10 +34,6 @@ export function Host(props: { sessionId: string; secret?: string }) {
   const [showFinish, setShowFinish] = useState<{ match: Match } | null>(null);
   const [winnerTeamId, setWinnerTeamId] = useState<string>("");
   const [uploadingPlayerId, setUploadingPlayerId] = useState<string | null>(null);
-
-  const origin = location.origin;
-  const viewerLink = buildViewerLink(origin, props.sessionId);
-  // const hostLink = buildHostLink(origin, props.sessionId, props.secret ?? "");
 
   useEffect(() => {
     ensureAnonAuth().catch(() => {});
@@ -88,28 +83,16 @@ export function Host(props: { sessionId: string; secret?: string }) {
           <Chip tone={conn === "ok" ? "good" : conn === "offline" ? "warn" : "muted"}>
             {conn === "ok" ? "Connected" : conn === "offline" ? "Offline" : "Connecting"}
           </Chip>
+          <div className="flex justify-end"><PlayerCountChip count={players.length} /></div>
           <div className="text-[11px] text-slate-500">Phase: {session?.phase ?? "-"}</div>
         </div>
       </div>
 
       <Card>
-        <CardHeader
-          title="Share"
-          right={
-            <button
-              className="text-xs font-semibold text-slate-700"
-              onClick={async () => {
-                await navigator.clipboard.writeText(viewerLink);
-                setToast({ id: nanoid(), kind: "success", message: "Viewer link copied." });
-              }}
-            >
-              Copy viewer link
-            </button>
-          }
-        />
+        <CardHeader title="Share session" />
         <CardBody className="text-sm text-slate-600">
-          Viewers open: <span className="font-mono break-all">{viewerLink}</span>
-          <div className="text-xs text-slate-500 mt-1">Viewer mode is read-only.</div>
+          Session code: <span className="font-mono text-base font-bold tracking-[0.35em]">{props.sessionId}</span>
+          <div className="text-xs text-slate-500 mt-1">Viewer ใส่โค้ด 6 ตัวนี้เพื่อเข้าดูได้ทันที</div>
         </CardBody>
       </Card>
 
@@ -263,8 +246,11 @@ export function Host(props: { sessionId: string; secret?: string }) {
                   await assertHost(props.sessionId);
                   await startOnce(props.sessionId);
 
+                  const autoOddMode = players.length % 2 === 1 ? "three_player_rotation" : "none";
+                  await updateSessionCore(props.sessionId, { config: { ...session!.config, oddMode: autoOddMode } });
+
                   // Create teams (once), initialize queue
-                  const { teams: newTeams, warnings } = buildInitialTeams(session!, players);
+                  const { teams: newTeams, warnings } = buildInitialTeams({ ...session!, config: { ...session!.config, oddMode: autoOddMode } }, players);
                   if (warnings.length) setToast({ id: nanoid(), kind: "info", message: warnings[0] });
 
                   await setTeamsAndQueue(props.sessionId, newTeams);
@@ -274,7 +260,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
                     await assignNextForCourt(props.sessionId, c.id);
                   }
 
-                  setToast({ id: nanoid(), kind: "success", message: "Started. Courts assigned." });
+                  setToast({ id: nanoid(), kind: "success", message: `Started. ${autoOddMode === "none" ? "Even players flow" : "3-player rotation flow"}.` });
                 } catch (e: any) {
                   setToast({ id: nanoid(), kind: "error", message: e?.message ?? "Failed to start" });
                 }
@@ -395,13 +381,11 @@ export function Host(props: { sessionId: string; secret?: string }) {
               <div key={r.id} className="rounded-xl border border-slate-100 px-3 py-2 text-sm">
                 <div className="text-xs text-slate-500">Court {r.courtId}</div>
                   <div className="font-semibold mt-2 text-sm font-semibold flex flex-wrap gap-5">
-                    <TeamLine team={ta} playerById={playerById} /> <span className="text-slate-400">vs</span> <TeamLine team={tb} playerById={playerById} />
+                    <TeamLine team={ta} playerById={playerById} playedIds={r.teamAPlayedPlayerIds} highlightWinner={win===r.teamAId} /> <span className="text-slate-400">vs</span> <TeamLine team={tb} playerById={playerById} playedIds={r.teamBPlayedPlayerIds} highlightWinner={win===r.teamBId} />
                   </div>
-                <div className="text-xs text-slate-600">
-                  Winner: {win === r.teamAId ? formatTeam(ta, playerById) : formatTeam(tb, playerById)}
-                  {r.isFallback ? " · fallback" : ""}
-                  <span className="font-semibold "> {winnerLoserScore(r) ? `(${winnerLoserScore(r)})` : ""}
-                  </span>
+                <div className="text-xs text-slate-600 mt-1">
+                  {r.isFallback ? "fallback · " : ""}
+                  <span className="font-semibold">{formatScoreByTeam(r)}</span>
                 </div>
                 
               </div>
@@ -411,6 +395,16 @@ export function Host(props: { sessionId: string; secret?: string }) {
         </CardBody>
       </Card>
       
+
+      <StatsTable players={players} editable onReset={async () => {
+        try {
+          await resetTableStats(props.sessionId);
+          setToast({ id: nanoid(), kind: "success", message: "รีเซ็ตตารางสถิติแล้ว" });
+        } catch (e: any) {
+          setToast({ id: nanoid(), kind: "error", message: e?.message ?? "รีเซ็ตตารางไม่สำเร็จ" });
+        }
+      }} />
+
       <Card>
         <CardHeader title="รีเซ็ต" />
         <CardBody className="space-y-2">
@@ -538,12 +532,12 @@ async function compressImageToDataUrl(file: File, maxEdge = 320, quality = 0.8):
   return canvas.toDataURL("image/jpeg", quality);
 }
 
-function TeamLine(props: { team: Team | undefined; playerById: (id: string) => Player | undefined }) {
+function TeamLine(props: { team: Team | undefined; playerById: (id: string) => Player | undefined; playedIds?: string[]; highlightWinner?: boolean }) {
   if (!props.team) return <div className="font-semibold">—</div>;
 
   return (
-    <div className="flex flex-wrap items-center gap-1 font-semibold">
-      {props.team.playerIds.map((id, idx) => {
+    <div className={`flex flex-wrap items-center gap-1 font-semibold rounded-full px-2 py-1 ${props.highlightWinner ? "border-2 border-emerald-500" : ""}`}>
+      {(props.playedIds ?? props.team.playerIds).map((id, idx) => {
         const p = props.playerById(id);
         return (
           <div key={id} className="inline-flex items-center gap-1">
@@ -559,12 +553,6 @@ function TeamLine(props: { team: Team | undefined; playerById: (id: string) => P
       })}
     </div>
   );
-}
-
-function formatTeam(team: Team | undefined, playerById: (id: string) => Player | undefined) {
-  if (!team) return "—";
-  const names = team.playerIds.map((id) => playerById(id)?.name ?? "?");
-  return names.join(" + ");
 }
 
 function FinishModal(props: {
@@ -733,10 +721,42 @@ function PickTwo(props: {
   );
 }
 
-function winnerLoserScore(r: ResultRow) {
-  if (r.scoreA == null || r.scoreB == null) return "";
-  const a = r.scoreA, b = r.scoreB;
-  const win = r.winnerTeamId === r.teamAId ? a : b;
-  const lose = r.winnerTeamId === r.teamAId ? b : a;
-  return `${win}–${lose}`;
+function formatScoreByTeam(r: ResultRow) {
+  if (r.scoreA == null || r.scoreB == null) return "No score";
+  return `Team A ${r.scoreA} - Team B ${r.scoreB}`;
+}
+
+function PlayerCountChip(props: { count: number }) {
+  const even = props.count % 2 === 0;
+  return (
+    <span className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold ${even ? "bg-slate-900 text-white" : "border-2 border-slate-700 text-slate-700"}`}>
+      {props.count}
+    </span>
+  );
+}
+
+function StatsTable(props: { players: Player[]; editable?: boolean; onReset?: () => void | Promise<void> }) {
+  const [sortBy, setSortBy] = useState<"wins"|"losses"|"played">("wins");
+  const rows = [...props.players].sort((a,b)=>b.stats[sortBy]-a.stats[sortBy]);
+  return (
+    <Card>
+      <CardHeader
+        title="Stats Table"
+        right={props.editable ? <button className="text-xs font-semibold text-rose-700" onClick={() => props.onReset?.()}>Reset table</button> : undefined}
+      />
+      <CardBody className="space-y-2">
+        <div className="flex gap-2">
+          <button className={`rounded-full border px-2 py-1 text-xs ${sortBy==="wins"?"bg-slate-900 text-white":""}`} onClick={()=>setSortBy("wins")}>Wins</button>
+          <button className={`rounded-full border px-2 py-1 text-xs ${sortBy==="losses"?"bg-slate-900 text-white":""}`} onClick={()=>setSortBy("losses")}>Losses</button>
+          <button className={`rounded-full border px-2 py-1 text-xs ${sortBy==="played"?"bg-slate-900 text-white":""}`} onClick={()=>setSortBy("played")}>Played</button>
+        </div>
+        <div className="rounded-xl border border-slate-200 overflow-hidden">
+          <table className="w-full text-xs">
+            <thead className="bg-slate-100"><tr><th className="p-2 text-left">Player</th><th className="p-2">W</th><th className="p-2">L</th><th className="p-2">P</th></tr></thead>
+            <tbody>{rows.map((p)=><tr key={p.id} className="border-t"><td className="p-2">{p.name}</td><td className="p-2 text-center">{p.stats.wins}</td><td className="p-2 text-center">{p.stats.losses}</td><td className="p-2 text-center">{p.stats.played}</td></tr>)}</tbody>
+          </table>
+        </div>
+      </CardBody>
+    </Card>
+  );
 }

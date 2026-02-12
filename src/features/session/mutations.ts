@@ -326,6 +326,8 @@ export async function finishMatch(
       isFallback: m.isFallback ?? false,
       scoreA: payload.scoreA ?? null,
       scoreB: payload.scoreB ?? null,
+      teamAPlayedPlayerIds: teamAPlayed,
+      teamBPlayedPlayerIds: teamBPlayed,
     };
     tx.set(doc(db, COL.sessions, sessionId, COL.results, r.id), r);
 
@@ -334,6 +336,23 @@ export async function finishMatch(
   });
 }
 
+
+
+export async function resetTableStats(sessionId: string) {
+  const user = await ensureAnonAuth();
+  const sRef = doc(db, COL.sessions, sessionId);
+  const sSnap = await getDoc(sRef);
+  if (!sSnap.exists()) throw new Error("Missing session");
+  const s = sSnap.data() as Session;
+  if (s.hostUid !== user.uid) throw new Error("Not host");
+
+  const playersSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.players));
+  const b = writeBatch(db);
+  playersSnap.docs.forEach((d) => {
+    b.update(d.ref, { stats: { played: 0, wins: 0, losses: 0 }, playHistory: [] });
+  });
+  await b.commit();
+}
 
 
 export async function resetPairing(sessionId: string) {
