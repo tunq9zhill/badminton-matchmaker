@@ -152,7 +152,7 @@ export function Landing() {
 
       <Card>
         <CardBody className="space-y-3">
-          <Button onClick={() => setMode("create")}>Create host</Button>
+          <Button onClick={() => setMode("create")}>Create Court</Button>
           <Button variant="secondary" onClick={() => setMode("viewer")}>Viewer</Button>
         </CardBody>
       </Card>

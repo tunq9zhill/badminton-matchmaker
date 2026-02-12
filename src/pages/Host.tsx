@@ -36,7 +36,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
   const [uploadingPlayerId, setUploadingPlayerId] = useState<string | null>(null);
 
   useEffect(() => {
-    ensureAnonAuth().catch(() => {});
+    ensureAnonAuth().catch(() => { });
   }, []);
 
   useEffect(() => subscribeSession(props.sessionId, setSession), [props.sessionId]);
@@ -68,12 +68,12 @@ export function Host(props: { sessionId: string; secret?: string }) {
 
   return (
     <div className="mx-auto max-w-md p-4 space-y-3">
-        <button
+      <button
         className="text-xs font-semibold text-slate-700"
         onClick={() => setConfirmHome(true)}
-        >
+      >
         กลับหน้าแรก
-        </button>
+      </button>
       <div className="flex items-center justify-between pt-2">
         <div>
           <div className="flex justify-start items-center gap-1">
@@ -86,7 +86,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
           <Chip tone={conn === "ok" ? "good" : conn === "offline" ? "warn" : "muted"}>
             {conn === "ok" ? "Connected" : conn === "offline" ? "Offline" : "Connecting"}
           </Chip>
-        
+
           <div className="text-[11px] text-slate-500">Phase: {session?.phase ?? "-"}</div>
         </div>
       </div>
@@ -104,46 +104,46 @@ export function Host(props: { sessionId: string; secret?: string }) {
         <CardBody className="space-y-3 overflow-visible">
           {!isLocked && (
             <form
-                className="flex gap-2"
-                  onSubmit={async (e) => {
-                    e.preventDefault();
+              className="flex gap-2"
+              onSubmit={async (e) => {
+                e.preventDefault();
 
-                    // ตัดช่องว่างหัวท้าย
-                    const raw = playerName.trim();
-                    if (!raw) return;
+                // ตัดช่องว่างหัวท้าย
+                const raw = playerName.trim();
+                if (!raw) return;
 
-                    // แยกชื่อด้วยเว้นวรรค (รองรับหลายช่องว่าง)
-                    const names = raw
-                      .split(/\s+/g)          // ← จุดสำคัญ
-                      .map((n) => n.trim())
-                      .filter(Boolean);
+                // แยกชื่อด้วยเว้นวรรค (รองรับหลายช่องว่าง)
+                const names = raw
+                  .split(/\s+/g)          // ← จุดสำคัญ
+                  .map((n) => n.trim())
+                  .filter(Boolean);
 
-                    // กันชื่อซ้ำในชุดเดียว
-                    const uniqueNames = Array.from(new Set(names));
-                    if (uniqueNames.length === 0) return;
+                // กันชื่อซ้ำในชุดเดียว
+                const uniqueNames = Array.from(new Set(names));
+                if (uniqueNames.length === 0) return;
 
-                    try {
-                      await upsertPlayers(props.sessionId, uniqueNames);
-                      setPlayerName("");
-                    } catch (e: any) {
-                      setToast({
-                        id: nanoid(),
-                        kind: "error",
-                        message: e?.message ?? "เพิ่มผู้เล่นไม่สำเร็จ",
-                      });
-                    }
-                  }}
+                try {
+                  await upsertPlayers(props.sessionId, uniqueNames);
+                  setPlayerName("");
+                } catch (e: any) {
+                  setToast({
+                    id: nanoid(),
+                    kind: "error",
+                    message: e?.message ?? "เพิ่มผู้เล่นไม่สำเร็จ",
+                  });
+                }
+              }}
             >
-                <div className="flex-1">
-                    <Input value={playerName} onChange={setPlayerName} placeholder="พิมพ์ชื่อแล้วกด Enter" />
-                </div>
-                <button
-                    type="submit"
-                    className="rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold"
-                >
-                    เพิ่ม
-                </button>
-                </form>
+              <div className="flex-1">
+                <Input value={playerName} onChange={setPlayerName} placeholder="พิมพ์ชื่อแล้วกด Enter" />
+              </div>
+              <button
+                type="submit"
+                className="rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold"
+              >
+                เพิ่ม
+              </button>
+            </form>
           )}
 
           <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
@@ -269,7 +269,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
                 }
               }}
             >
-              START (press once)
+              START
             </Button>
 
             <div className="text-xs text-slate-500">
@@ -305,29 +305,29 @@ export function Host(props: { sessionId: string; secret?: string }) {
                     </div>
 
                     <div className="mt-2 grid grid-cols-2 gap-2">
-                        
-                        <Button
-                            variant="danger"
-                            onClick={async () => {
-                            const { cancelMatchAndReschedule } = await import("../features/session/mutations");
-                            await cancelMatchAndReschedule(props.sessionId, m.id);
-                            await assignNextForCourt(props.sessionId, c.id);
-                            setToast({ id: nanoid(), kind: "info", message: "Canceled. Attempted reschedule." });
-                            }}
-                        >
-                            Cancel
-                        </Button>
-                        
-                        <Button
-                            variant="primary"
-                            disabled={m.status === "finished" || m.status === "canceled"}
-                            onClick={() => {
-                            setWinnerTeamId(m.teamAId);
-                            setShowFinish({ match: m });
-                            }}
-                        >
-                            Finish
-                        </Button>
+
+                      <Button
+                        variant="danger"
+                        onClick={async () => {
+                          const { cancelMatchAndReschedule } = await import("../features/session/mutations");
+                          await cancelMatchAndReschedule(props.sessionId, m.id);
+                          await assignNextForCourt(props.sessionId, c.id);
+                          setToast({ id: nanoid(), kind: "info", message: "Canceled. Attempted reschedule." });
+                        }}
+                      >
+                        Cancel
+                      </Button>
+
+                      <Button
+                        variant="primary"
+                        disabled={m.status === "finished" || m.status === "canceled"}
+                        onClick={() => {
+                          setWinnerTeamId(m.teamAId);
+                          setShowFinish({ match: m });
+                        }}
+                      >
+                        Finish
+                      </Button>
                     </div>
                   </div>
                 ) : (
@@ -380,24 +380,24 @@ export function Host(props: { sessionId: string; secret?: string }) {
             const tb = teamById(r.teamBId);
             const win = r.winnerTeamId;
             return (
-              
+
               <div key={r.id} className="rounded-xl border border-slate-100 px-3 py-2 text-sm">
                 <div className="text-xs text-slate-500">Court {r.courtId}</div>
-                  <div className="font-semibold mt-2 text-sm font-semibold flex flex-wrap gap-5">
-                    <TeamLine team={ta} playerById={playerById} playedIds={r.teamAPlayedPlayerIds} highlightWinner={win===r.teamAId} /> <span className="text-slate-400">vs</span> <TeamLine team={tb} playerById={playerById} playedIds={r.teamBPlayedPlayerIds} highlightWinner={win===r.teamBId} />
-                  </div>
+                <div className="font-semibold mt-2 text-sm font-semibold flex flex-wrap gap-5">
+                  <TeamLine team={ta} playerById={playerById} playedIds={r.teamAPlayedPlayerIds} highlightWinner={win === r.teamAId} /> <span className="text-slate-400 flex items-center">vs</span> <TeamLine team={tb} playerById={playerById} playedIds={r.teamBPlayedPlayerIds} highlightWinner={win === r.teamBId} />
+                </div>
                 <div className="text-xs text-slate-600 mt-1">
                   {r.isFallback ? "fallback · " : ""}
                   <span className="font-semibold">{formatScoreByTeam(r)}</span>
                 </div>
-                
+
               </div>
             );
           })}
           {results.length === 0 && <div className="text-sm text-slate-500">No results yet.</div>}
         </CardBody>
       </Card>
-      
+
 
       <StatsTable players={players} editable onReset={async () => {
         try {
@@ -446,9 +446,9 @@ export function Host(props: { sessionId: string; secret?: string }) {
         </CardBody>
       </Card>
       {showFinish && (
-        
+
         <FinishModal
-        
+
           match={showFinish.match}
           teamA={teamById(showFinish.match.teamAId)!}
           teamB={teamById(showFinish.match.teamBId)!}
@@ -458,50 +458,50 @@ export function Host(props: { sessionId: string; secret?: string }) {
           onClose={() => setShowFinish(null)}
           onConfirm={async (played) => {
             try {
-                await finishMatch(props.sessionId, showFinish.match.id, winnerTeamId, played);
-                await assignNextForCourt(props.sessionId, showFinish.match.courtId);
-                setToast({ id: nanoid(), kind: "success", message: "บันทึกผลแล้ว และพยายามจัดแมตช์ถัดไป" });
-                setShowFinish(null);
+              await finishMatch(props.sessionId, showFinish.match.id, winnerTeamId, played);
+              await assignNextForCourt(props.sessionId, showFinish.match.courtId);
+              setToast({ id: nanoid(), kind: "success", message: "บันทึกผลแล้ว และพยายามจัดแมตช์ถัดไป" });
+              setShowFinish(null);
             } catch (e: any) {
-                setToast({ id: nanoid(), kind: "error", message: e?.message ?? "Finish ไม่สำเร็จ" });
+              setToast({ id: nanoid(), kind: "error", message: e?.message ?? "Finish ไม่สำเร็จ" });
             }
-            }
-        }
+          }
+          }
         />
       )}{confirmHome && (
-  <Modal
-    title="ยืนยันกลับหน้าแรก"
-    onClose={() => setConfirmHome(false)}
-    actions={
-      <div className="grid grid-cols-2 gap-2">
-        <Button variant="secondary" onClick={() => setConfirmHome(false)}>
-          ยกเลิก
-        </Button>
-        <Button
-          variant="danger"
-          onClick={async () => {
-            try {
-              const { resetAll } = await import("../features/session/mutations");
-              await resetAll(props.sessionId, true);
-              history.pushState({}, "", "/");
-              window.dispatchEvent(new PopStateEvent("popstate"));
-            } catch (e: any) {
-              setToast({ id: nanoid(), kind: "error", message: e?.message ?? "รีเซ็ตไม่สำเร็จ" });
-            }
-          }}
+        <Modal
+          title="ยืนยันกลับหน้าแรก"
+          onClose={() => setConfirmHome(false)}
+          actions={
+            <div className="grid grid-cols-2 gap-2">
+              <Button variant="secondary" onClick={() => setConfirmHome(false)}>
+                ยกเลิก
+              </Button>
+              <Button
+                variant="danger"
+                onClick={async () => {
+                  try {
+                    const { resetAll } = await import("../features/session/mutations");
+                    await resetAll(props.sessionId, true);
+                    history.pushState({}, "", "/");
+                    window.dispatchEvent(new PopStateEvent("popstate"));
+                  } catch (e: any) {
+                    setToast({ id: nanoid(), kind: "error", message: e?.message ?? "รีเซ็ตไม่สำเร็จ" });
+                  }
+                }}
+              >
+                รีเซ็ต & กลับหน้าแรก
+              </Button>
+            </div>
+          }
         >
-          รีเซ็ต & กลับหน้าแรก
-        </Button>
-      </div>
-    }
-  >
-    <div className="text-sm text-slate-600">
-      การกลับหน้าแรกจะรีเซ็ตทั้งหมด (แต่เก็บรายชื่อผู้เล่น) แน่ใจหรือไม่?
+          <div className="text-sm text-slate-600">
+            การกลับหน้าแรกจะรีเซ็ตทั้งหมด (แต่เก็บรายชื่อผู้เล่น) แน่ใจหรือไม่?
+          </div>
+        </Modal>
+      )}
     </div>
-  </Modal>
-)}
-    </div>
-    
+
   );
 }
 
@@ -550,7 +550,7 @@ function TeamLine(props: { team: Team | undefined; playerById: (id: string) => P
               <div className="h-6 w-6 rounded-full border border-dashed border-slate-300 bg-slate-50" />
             )}
             <span>{p?.name ?? "?"}</span>
-            {idx < props.team!.playerIds.length - 1 && <span className="text-slate-400">+</span>}
+            {idx < props.team!.playerIds.length - 1 && <span className="text-slate-400"></span>}
           </div>
         );
       })}
@@ -559,7 +559,7 @@ function TeamLine(props: { team: Team | undefined; playerById: (id: string) => P
 }
 
 function FinishModal(props: {
-    
+
   match: Match;
   teamA: Team;
   teamB: Team;
@@ -568,11 +568,11 @@ function FinishModal(props: {
   setWinnerTeamId: (v: string) => void;
   onClose: () => void;
   onConfirm: (payload: {
-  teamAPlayedPlayerIds?: string[];
-  teamBPlayedPlayerIds?: string[];
-  scoreA?: number;
-  scoreB?: number;
-}) => Promise<void> | void;
+    teamAPlayedPlayerIds?: string[];
+    teamBPlayedPlayerIds?: string[];
+    scoreA?: number;
+    scoreB?: number;
+  }) => Promise<void> | void;
 
 }) {
   const [winScore, setWinScore] = useState<string>("");
@@ -581,8 +581,8 @@ function FinishModal(props: {
   const [bPlayed, setBPlayed] = useState<string[]>([]);
   const needsA = props.teamA.playerIds.length === 3;
   const needsB = props.teamB.playerIds.length === 3;
-  const labelA = props.teamA.playerIds.map((id)=>props.playerById(id)?.name ?? "?").join(" + ");
-  const labelB = props.teamB.playerIds.map((id)=>props.playerById(id)?.name ?? "?").join(" + ");
+  const labelA = props.teamA.playerIds.map((id) => props.playerById(id)?.name ?? "?").join(" + ");
+  const labelB = props.teamB.playerIds.map((id) => props.playerById(id)?.name ?? "?").join(" + ");
 
 
   return (
@@ -590,60 +590,60 @@ function FinishModal(props: {
       title="Finish Match"
       onClose={props.onClose}
       actions={
-  <Button
-    onClick={async () => {
-      try {
-        const payload: any = {};
+        <Button
+          onClick={async () => {
+            try {
+              const payload: any = {};
 
-        // 3-player: ต้องส่งคนที่ลงจริง
-        if (needsA) payload.teamAPlayedPlayerIds = aPlayed;
-        if (needsB) payload.teamBPlayedPlayerIds = bPlayed;
+              // 3-player: ต้องส่งคนที่ลงจริง
+              if (needsA) payload.teamAPlayedPlayerIds = aPlayed;
+              if (needsB) payload.teamBPlayedPlayerIds = bPlayed;
 
-        // score: กรอกแบบ ผู้ชนะ/ผู้แพ้ แล้ว map เป็น scoreA/scoreB
-        const w = winScore === "" ? NaN : Number(winScore);
-        const l = loseScore === "" ? NaN : Number(loseScore);
-        if (Number.isFinite(w) && Number.isFinite(l)) {
-          if (props.winnerTeamId === props.teamA.id) {
-            payload.scoreA = w;
-            payload.scoreB = l;
-          } else {
-            payload.scoreA = l;
-            payload.scoreB = w;
+              // score: กรอกแบบ ผู้ชนะ/ผู้แพ้ แล้ว map เป็น scoreA/scoreB
+              const w = winScore === "" ? NaN : Number(winScore);
+              const l = loseScore === "" ? NaN : Number(loseScore);
+              if (Number.isFinite(w) && Number.isFinite(l)) {
+                if (props.winnerTeamId === props.teamA.id) {
+                  payload.scoreA = w;
+                  payload.scoreB = l;
+                } else {
+                  payload.scoreA = l;
+                  payload.scoreB = w;
+                }
+              }
+
+              await props.onConfirm(payload);
+            } catch (e) {
+              console.error(e);
+            }
+          }}
+          disabled={
+            !props.winnerTeamId ||
+            (needsA && aPlayed.length !== 2) ||
+            (needsB && bPlayed.length !== 2)
           }
-        }
-
-        await props.onConfirm(payload);
-      } catch (e) {
-        console.error(e);
+        >
+          ยืนยันผู้ชนะ
+        </Button>
       }
-    }}
-    disabled={
-      !props.winnerTeamId ||
-      (needsA && aPlayed.length !== 2) ||
-      (needsB && bPlayed.length !== 2)
-    }
-  >
-    ยืนยันผู้ชนะ
-  </Button>
-}
 
     >
       <div className="space-y-3 text-sm">
         <div className="font-semibold">Winner</div>
         <div className="grid grid-cols-2 gap-2">
           <button
-                className={`rounded-xl border px-3 py-3 font-semibold ${props.winnerTeamId===props.teamA.id?"bg-slate-900 text-white border-slate-900":"bg-white border-slate-200"}`}
-                onClick={() => props.setWinnerTeamId(props.teamA.id)}
-            >
-                ผู้ชนะ: {labelA}
-            </button>
+            className={`rounded-xl border px-3 py-3 font-semibold ${props.winnerTeamId === props.teamA.id ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-200"}`}
+            onClick={() => props.setWinnerTeamId(props.teamA.id)}
+          >
+            ผู้ชนะ: {labelA}
+          </button>
 
-            <button
-                className={`rounded-xl border px-3 py-3 font-semibold ${props.winnerTeamId===props.teamB.id?"bg-slate-900 text-white border-slate-900":"bg-white border-slate-200"}`}
-                onClick={() => props.setWinnerTeamId(props.teamB.id)}
-            >
-                ผู้ชนะ: {labelB}
-            </button>
+          <button
+            className={`rounded-xl border px-3 py-3 font-semibold ${props.winnerTeamId === props.teamB.id ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-200"}`}
+            onClick={() => props.setWinnerTeamId(props.teamB.id)}
+          >
+            ผู้ชนะ: {labelB}
+          </button>
         </div>
 
         {needsA && (
@@ -662,29 +662,29 @@ function FinishModal(props: {
       <div className="space-y-2">
         <div className="font-semibold">สกอร์</div>
         <div className="grid grid-cols-2 gap-2">
-            <input
+          <input
             className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
             type="number"
             inputMode="numeric"
             placeholder="คะแนนผู้ชนะ"
             value={winScore}
             onChange={(e) => setWinScore(e.target.value)}
-            />
-            <input
+          />
+          <input
             className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
             type="number"
             inputMode="numeric"
             placeholder="คะแนนผู้แพ้"
             value={loseScore}
             onChange={(e) => setLoseScore(e.target.value)}
-            />
+          />
         </div>
-        </div>
+      </div>
 
     </Modal>
-    
+
   );
-  
+
 }
 
 function PickTwo(props: {
@@ -700,7 +700,7 @@ function PickTwo(props: {
         return (
           <button
             key={id}
-            className={`rounded-full border px-3 py-2 text-xs font-semibold ${on?"bg-slate-900 text-white border-slate-900":"bg-white border-slate-200"}`}
+            className={`rounded-full border px-3 py-2 text-xs font-semibold ${on ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-200"}`}
             onClick={() => {
               if (on) props.setPicked(props.picked.filter((x) => x !== id));
               else {
@@ -739,8 +739,8 @@ function PlayerCountChip(props: { count: number }) {
 }
 
 function StatsTable(props: { players: Player[]; editable?: boolean; onReset?: () => void | Promise<void> }) {
-  const [sortBy, setSortBy] = useState<"wins"|"losses"|"played">("wins");
-  const rows = [...props.players].sort((a,b)=>b.stats[sortBy]-a.stats[sortBy]);
+  const [sortBy, setSortBy] = useState<"wins" | "losses" | "played">("wins");
+  const rows = [...props.players].sort((a, b) => b.stats[sortBy] - a.stats[sortBy]);
   return (
     <Card>
       <CardHeader
@@ -749,14 +749,14 @@ function StatsTable(props: { players: Player[]; editable?: boolean; onReset?: ()
       />
       <CardBody className="space-y-2">
         <div className="flex gap-2">
-          <button className={`rounded-full border px-2 py-1 text-xs ${sortBy==="wins"?"bg-slate-900 text-white":""}`} onClick={()=>setSortBy("wins")}>Wins</button>
-          <button className={`rounded-full border px-2 py-1 text-xs ${sortBy==="losses"?"bg-slate-900 text-white":""}`} onClick={()=>setSortBy("losses")}>Losses</button>
-          <button className={`rounded-full border px-2 py-1 text-xs ${sortBy==="played"?"bg-slate-900 text-white":""}`} onClick={()=>setSortBy("played")}>Played</button>
+          <button className={`rounded-full border px-2 py-1 text-xs ${sortBy === "wins" ? "bg-slate-900 text-white" : ""}`} onClick={() => setSortBy("wins")}>Wins</button>
+          <button className={`rounded-full border px-2 py-1 text-xs ${sortBy === "losses" ? "bg-slate-900 text-white" : ""}`} onClick={() => setSortBy("losses")}>Losses</button>
+          <button className={`rounded-full border px-2 py-1 text-xs ${sortBy === "played" ? "bg-slate-900 text-white" : ""}`} onClick={() => setSortBy("played")}>Played</button>
         </div>
         <div className="rounded-xl border border-slate-200 overflow-hidden">
           <table className="w-full text-xs">
             <thead className="bg-slate-100"><tr><th className="p-2 text-left">Player</th><th className="p-2">W</th><th className="p-2">L</th><th className="p-2">P</th></tr></thead>
-            <tbody>{rows.map((p)=><tr key={p.id} className="border-t"><td className="p-2">{p.name}</td><td className="p-2 text-center">{p.stats.wins}</td><td className="p-2 text-center">{p.stats.losses}</td><td className="p-2 text-center">{p.stats.played}</td></tr>)}</tbody>
+            <tbody>{rows.map((p) => <tr key={p.id} className="border-t"><td className="p-2">{p.name}</td><td className="p-2 text-center">{p.stats.wins}</td><td className="p-2 text-center">{p.stats.losses}</td><td className="p-2 text-center">{p.stats.played}</td></tr>)}</tbody>
           </table>
         </div>
       </CardBody>
