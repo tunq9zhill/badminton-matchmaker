@@ -108,27 +108,72 @@ export function Landing() {
     let canceled = false;
     let videoTrack: MediaStreamTrack | null = null;
     let imageCapture: ImageCapture | null = null;
+    const frameCanvas = document.createElement("canvas");
+    const frameContext = frameCanvas.getContext("2d", { willReadFrequently: true });
 
     const detectFromSource = async () => {
       if (scanLockRef.current || !detector) return "";
-      if (videoRef.current) {
-        const results = await detector.detect(videoRef.current);
-        return results[0]?.rawValue?.trim() ?? "";
+      const videoEl = videoRef.current;
+      if (!videoEl) return "";
+
+      if (videoEl.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+        try {
+          const direct = await detector.detect(videoEl);
+          const directRaw = direct[0]?.rawValue?.trim();
+          if (directRaw) return directRaw;
+        } catch {
+          // fallback below
+        }
+
+        const width = videoEl.videoWidth;
+        const height = videoEl.videoHeight;
+        if (frameContext && width > 0 && height > 0) {
+          frameCanvas.width = width;
+          frameCanvas.height = height;
+          frameContext.drawImage(videoEl, 0, 0, width, height);
+          try {
+            const byCanvas = await detector.detect(frameCanvas);
+            const canvasRaw = byCanvas[0]?.rawValue?.trim();
+            if (canvasRaw) return canvasRaw;
+          } catch {
+            // fallback below
+          }
+        }
       }
+
       if (imageCapture) {
-        const bitmap = await (imageCapture as any).grabFrame();
-        const results = await detector.detect(bitmap);
-        return results[0]?.rawValue?.trim() ?? "";
+        try {
+          const bitmap = await (imageCapture as any).grabFrame();
+          const byImageCapture = await detector.detect(bitmap);
+          return byImageCapture[0]?.rawValue?.trim() ?? "";
+        } catch {
+          return "";
+        }
       }
       return "";
     };
 
+    const getRearCameraStream = async () => {
+      const candidates: MediaStreamConstraints[] = [
+        { video: { facingMode: { exact: "environment" } }, audio: false },
+        { video: { facingMode: "environment" }, audio: false },
+        { video: { facingMode: { ideal: "environment" } }, audio: false },
+        { video: true, audio: false },
+      ];
+
+      for (const constraints of candidates) {
+        try {
+          return await navigator.mediaDevices.getUserMedia(constraints);
+        } catch {
+          // try next constraints
+        }
+      }
+      throw new Error("camera_unavailable");
+    };
+
     const start = async () => {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "environment" },
-          audio: false,
-        });
+        stream = await getRearCameraStream();
         videoTrack = stream.getVideoTracks()[0] ?? null;
         if (videoTrack && "ImageCapture" in window) {
           imageCapture = new ImageCapture(videoTrack);
