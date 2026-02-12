@@ -202,7 +202,7 @@ function TeamLine(props: {
         return (
           <div key={id} className="inline-flex items-center gap-1">
             <PlayerIdentity player={p} compact onOpenImage={(url) => props.onOpenImage(p.name, url)} />
-            {i < props.team!.playerIds.length - 1 && <span className="text-slate-400">+</span>}
+            {i < props.team!.playerIds.length - 1 && <span className="text-slate-400"></span>}
           </div>
         );
       })}
