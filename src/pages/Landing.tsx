@@ -9,6 +9,52 @@ import { Modal } from "../ui/Modal";
 
 type LandingMode = "home" | "create" | "viewer";
 
+type JsQrResult = { data?: string };
+type JsQrDecoder = (
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  options?: { inversionAttempts?: "dontInvert" | "onlyInvert" | "attemptBoth" | "invertFirst" },
+) => JsQrResult | null;
+
+const jsQrCdnCandidates = [
+  "https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js",
+  "https://unpkg.com/jsqr@1.4.0/dist/jsQR.js",
+];
+let jsQrLoaderPromise: Promise<JsQrDecoder | null> | null = null;
+
+function getJsQrDecoder(): JsQrDecoder | null {
+  return (window as any).jsQR as JsQrDecoder | undefined ?? null;
+}
+
+function loadJsQrDecoder(): Promise<JsQrDecoder | null> {
+  const existing = getJsQrDecoder();
+  if (existing) return Promise.resolve(existing);
+  if (jsQrLoaderPromise) return jsQrLoaderPromise;
+
+  jsQrLoaderPromise = (async () => {
+    for (const src of jsQrCdnCandidates) {
+      const loaded = await new Promise<boolean>((resolve) => {
+        const script = document.createElement("script");
+        script.src = src;
+        script.async = true;
+        script.crossOrigin = "anonymous";
+        script.onload = () => resolve(true);
+        script.onerror = () => resolve(false);
+        document.head.appendChild(script);
+      });
+
+      if (loaded) {
+        const decoder = getJsQrDecoder();
+        if (decoder) return decoder;
+      }
+    }
+    return null;
+  })();
+
+  return jsQrLoaderPromise;
+}
+
 const carouselImages = [
   "./public/ImageCarousel/1.jpg",
   "./public/ImageCarousel/2.jpg",
@@ -106,13 +152,106 @@ export function Landing() {
     let detector: BarcodeDetector | null = null;
     let timer: number | undefined;
     let canceled = false;
+    let videoTrack: MediaStreamTrack | null = null;
+    let imageCapture: ImageCapture | null = null;
+    let jsQrDecoder: JsQrDecoder | null = null;
+    const frameCanvas = document.createElement("canvas");
+    const frameContext = frameCanvas.getContext("2d", { willReadFrequently: true });
+
+    const detectFromSource = async () => {
+      if (scanLockRef.current) return "";
+      const videoEl = videoRef.current;
+      if (!videoEl) return "";
+
+      if (videoEl.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+        try {
+          const direct = detector ? await detector.detect(videoEl) : [];
+          const directRaw = direct[0]?.rawValue?.trim();
+          if (directRaw) return directRaw;
+        } catch {
+          // fallback below
+        }
+
+        const width = videoEl.videoWidth;
+        const height = videoEl.videoHeight;
+        if (frameContext && width > 0 && height > 0) {
+          frameCanvas.width = width;
+          frameCanvas.height = height;
+          frameContext.drawImage(videoEl, 0, 0, width, height);
+          try {
+            const byCanvas = detector ? await detector.detect(frameCanvas) : [];
+            const canvasRaw = byCanvas[0]?.rawValue?.trim();
+            if (canvasRaw) return canvasRaw;
+          } catch {
+            // fallback below
+          }
+
+          if (jsQrDecoder) {
+            try {
+              const imageData = frameContext.getImageData(0, 0, width, height);
+              const qr = jsQrDecoder(imageData.data, width, height, { inversionAttempts: "attemptBoth" });
+              const jsQrRaw = qr?.data?.trim();
+              if (jsQrRaw) return jsQrRaw;
+            } catch {
+              // ignore jsQR frame errors
+            }
+          }
+        }
+      }
+
+      if (imageCapture) {
+        try {
+          const bitmap = await (imageCapture as any).grabFrame();
+          if (detector) {
+            const byImageCapture = await detector.detect(bitmap);
+            const raw = byImageCapture[0]?.rawValue?.trim();
+            if (raw) return raw;
+          }
+          if (jsQrDecoder && frameContext) {
+            const width = bitmap.width ?? 0;
+            const height = bitmap.height ?? 0;
+            if (width > 0 && height > 0) {
+              frameCanvas.width = width;
+              frameCanvas.height = height;
+              frameContext.drawImage(bitmap, 0, 0, width, height);
+              const imageData = frameContext.getImageData(0, 0, width, height);
+              const qr = jsQrDecoder(imageData.data, width, height, { inversionAttempts: "attemptBoth" });
+              return qr?.data?.trim() ?? "";
+            }
+          }
+          return "";
+        } catch {
+          return "";
+        }
+      }
+      return "";
+    };
+
+    const getRearCameraStream = async () => {
+      const candidates: MediaStreamConstraints[] = [
+        { video: { facingMode: { exact: "environment" } }, audio: false },
+        { video: { facingMode: "environment" }, audio: false },
+        { video: { facingMode: { ideal: "environment" } }, audio: false },
+        { video: true, audio: false },
+      ];
+
+      for (const constraints of candidates) {
+        try {
+          return await navigator.mediaDevices.getUserMedia(constraints);
+        } catch {
+          // try next constraints
+        }
+      }
+      throw new Error("camera_unavailable");
+    };
 
     const start = async () => {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: "environment" } },
-          audio: false,
-        });
+        stream = await getRearCameraStream();
+        videoTrack = stream.getVideoTracks()[0] ?? null;
+        if (videoTrack && "ImageCapture" in window) {
+          imageCapture = new ImageCapture(videoTrack);
+        }
         if (!videoRef.current) return;
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
@@ -120,16 +259,30 @@ export function Landing() {
         setCameraReady(true);
         setScanError("");
 
-        if (!("BarcodeDetector" in window)) {
+        const BarcodeDetectorCtor = (globalThis as any).BarcodeDetector as
+          | (new (options?: BarcodeDetectorOptions) => BarcodeDetector)
+          | undefined;
+        const supportsNativeQr = async () => {
+          if (!BarcodeDetectorCtor) return false;
+          const supportsFormat = typeof (BarcodeDetectorCtor as any).getSupportedFormats === "function"
+            ? await (BarcodeDetectorCtor as any).getSupportedFormats()
+            : [];
+          return supportsFormat.length === 0 || supportsFormat.includes("qr_code");
+        };
+
+        if (await supportsNativeQr()) {
+          detector = new BarcodeDetectorCtor!({ formats: ["qr_code"] });
+        }
+
+        jsQrDecoder = await loadJsQrDecoder();
+        if (!detector && !jsQrDecoder) {
           setScanError("เบราว์เซอร์นี้ไม่รองรับการสแกน QR อัตโนมัติ");
           return;
         }
-        detector = new BarcodeDetector({ formats: ["qr_code"] });
         timer = window.setInterval(async () => {
-          if (!videoRef.current || !detector || scanLockRef.current) return;
+          if (scanLockRef.current) return;
           try {
-            const results = await detector.detect(videoRef.current);
-            const raw = results[0]?.rawValue?.trim();
+            const raw = await detectFromSource();
             if (!raw) return;
 
             const parsed = extractCodeFromRaw(raw);
