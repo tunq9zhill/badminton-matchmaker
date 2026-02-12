@@ -33,6 +33,7 @@ export function Landing() {
   const [cameraReady, setCameraReady] = useState(false);
   const setToast = useAppStore((s) => s.setToast);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const otpRefs = useRef<Array<HTMLInputElement | null>>([]);
   const scanLockRef = useRef(false);
 
   useEffect(() => {
@@ -49,6 +50,20 @@ export function Landing() {
   }, [courtCount]);
 
   const codeValue = viewerCode.join("");
+
+
+  const setOtpAt = (idx: number, value: string) => {
+    setViewerCode((prev) => {
+      const next = [...prev];
+      next[idx] = value;
+      return next;
+    });
+  };
+
+  const focusOtp = (idx: number) => {
+    otpRefs.current[idx]?.focus();
+    otpRefs.current[idx]?.select();
+  };
 
   const moveToViewer = async (candidate?: string) => {
     if (joining) return;
@@ -203,14 +218,55 @@ export function Landing() {
                   maxLength={1}
                   className="h-12 w-11 rounded-xl border border-slate-200 text-center text-lg font-semibold uppercase"
                   onChange={(e) => {
-                    const ch = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
-                    const next = [...viewerCode];
-                    next[idx] = ch;
-                    setViewerCode(next);
-                    if (ch && idx < 5) {
-                      (document.getElementById(`otp-${idx + 1}`) as HTMLInputElement | null)?.focus();
+                    const ch = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(-1);
+                    setOtpAt(idx, ch);
+                    if (ch && idx < 5) focusOtp(idx + 1);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Backspace") {
+                      if (viewerCode[idx]) {
+                        setOtpAt(idx, "");
+                        return;
+                      }
+                      if (idx > 0) {
+                        setOtpAt(idx - 1, "");
+                        focusOtp(idx - 1);
+                        e.preventDefault();
+                      }
+                      return;
+                    }
+
+                    if (e.key === "ArrowLeft" && idx > 0) {
+                      focusOtp(idx - 1);
+                      e.preventDefault();
+                    }
+
+                    if (e.key === "ArrowRight" && idx < 5) {
+                      focusOtp(idx + 1);
+                      e.preventDefault();
                     }
                   }}
+                  onPaste={(e) => {
+                    const pasted = e.clipboardData
+                      .getData("text")
+                      .toUpperCase()
+                      .replace(/[^A-Z0-9]/g, "")
+                      .slice(0, 6 - idx);
+                    if (!pasted) return;
+                    e.preventDefault();
+
+                    setViewerCode((prev) => {
+                      const next = [...prev];
+                      for (let i = 0; i < pasted.length; i++) {
+                        next[idx + i] = pasted[i];
+                      }
+                      return next;
+                    });
+
+                    const target = Math.min(idx + pasted.length, 5);
+                    focusOtp(target);
+                  }}
+                  ref={(el) => { otpRefs.current[idx] = el; }}
                   id={`otp-${idx}`}
                 />
               ))}
