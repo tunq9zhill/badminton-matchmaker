@@ -10,9 +10,16 @@ import { COL, type ResultRow } from "./schema";
 import { deleteDoc } from "firebase/firestore";
 
 
-export async function createSession(params: { courtCount: number; oddMode: "three_player_rotation" | "none" }) {
+function generateSessionCode() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let code = "";
+  for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return code;
+}
+
+export async function createSession(params: { courtCount: number }) {
   const user = await ensureAnonAuth();
-  const sessionId = nanoid(10);
+  const sessionId = generateSessionCode();
   const secret = nanoid(24);
   const hostSecretHash = await sha256Base64(secret);
 
@@ -22,7 +29,7 @@ export async function createSession(params: { courtCount: number; oddMode: "thre
     hostUid: user.uid,
     hostSecretHash,
     phase: "coverage",
-    config: { courtCount: params.courtCount, scoring: 21, oddMode: params.oddMode },
+    config: { courtCount: params.courtCount, scoring: 21, oddMode: "three_player_rotation" },
     activeTeams: [],
     queueTeams: [],
     teammateHistory: {},
@@ -43,39 +50,51 @@ export async function createSession(params: { courtCount: number; oddMode: "thre
   return { sessionId, secret };
 }
 
+
+export async function sessionExists(sessionId: string) {
+  const s = await getDoc(doc(db, COL.sessions, sessionId.toUpperCase()));
+  return s.exists();
+}
+
 export function subscribeSession(sessionId: string, cb: (s: Session | null) => void) {
-  return onSnapshot(doc(db, COL.sessions, sessionId), (snap) => {
+  const sid = sessionId.toUpperCase();
+  return onSnapshot(doc(db, COL.sessions, sid), (snap) => {
     cb(snap.exists() ? (snap.data() as Session) : null);
   });
 }
 
 export function subscribePlayers(sessionId: string, cb: (rows: Player[]) => void) {
-  return onSnapshot(collection(db, COL.sessions, sessionId, COL.players), (snap) => {
+  const sid = sessionId.toUpperCase();
+  return onSnapshot(collection(db, COL.sessions, sid, COL.players), (snap) => {
     cb(snap.docs.map((d) => d.data() as Player));
   });
 }
 
 export function subscribeTeams(sessionId: string, cb: (rows: Team[]) => void) {
-  return onSnapshot(collection(db, COL.sessions, sessionId, COL.teams), (snap) => {
+  const sid = sessionId.toUpperCase();
+  return onSnapshot(collection(db, COL.sessions, sid, COL.teams), (snap) => {
     cb(snap.docs.map((d) => d.data() as Team));
   });
 }
 
 export function subscribeCourts(sessionId: string, cb: (rows: Court[]) => void) {
-  return onSnapshot(collection(db, COL.sessions, sessionId, COL.courts), (snap) => {
+  const sid = sessionId.toUpperCase();
+  return onSnapshot(collection(db, COL.sessions, sid, COL.courts), (snap) => {
     cb(snap.docs.map((d) => d.data() as Court).sort((a,b)=>Number(a.id)-Number(b.id)));
   });
 }
 
 export function subscribeMatches(sessionId: string, cb: (rows: Match[]) => void) {
-  return onSnapshot(collection(db, COL.sessions, sessionId, COL.matches), (snap) => {
+  const sid = sessionId.toUpperCase();
+  return onSnapshot(collection(db, COL.sessions, sid, COL.matches), (snap) => {
     cb(snap.docs.map((d) => d.data() as Match));
   });
 }
 
 export function subscribeRecentResults(sessionId: string, cb: (rows: ResultRow[]) => void) {
+  const sid = sessionId.toUpperCase();
   const qy = query(
-    collection(db, COL.sessions, sessionId, COL.results),
+    collection(db, COL.sessions, sid, COL.results),
     orderBy("endedAt", "desc"),
     limit(20)
   );
@@ -87,8 +106,9 @@ export function subscribeRecentResults(sessionId: string, cb: (rows: ResultRow[]
 }
 
 export async function assertHost(sessionId: string) {
+  const sid = sessionId.toUpperCase();
   const user = await ensureAnonAuth();
-  const s = await getDoc(doc(db, COL.sessions, sessionId));
+  const s = await getDoc(doc(db, COL.sessions, sid));
   if (!s.exists()) throw new Error("Session not found");
   const session = s.data() as Session;
   if (session.hostUid !== user.uid) throw new Error("Not host on this device");
@@ -96,22 +116,23 @@ export async function assertHost(sessionId: string) {
 }
 
 export async function upsertPlayers(sessionId: string, names: string[]) {
-  await assertHost(sessionId);
+  const sid = sessionId.toUpperCase();
+  await assertHost(sid);
   const b = writeBatch(db);
   for (const name of names) {
     const id = nanoid(8);
     const p: Player = { id, name: name.trim(), stats: { played: 0, wins: 0, losses: 0 } };
-    b.set(doc(db, COL.sessions, sessionId, COL.players, id), p);
+    b.set(doc(db, COL.sessions, sid, COL.players, id), p);
   }
   await b.commit();
 }
 
 export async function clearAll(sessionId: string, keepNames: boolean) {
-  await assertHost(sessionId);
+  await assertHost(sessionId.toUpperCase());
   // For brevity we “soft reset” by recreating session core fields and deleting subcollections is omitted.
   // In production, you’d use a backend admin job or callable function to delete subcollections.
   await runTransaction(db, async (tx) => {
-    const ref = doc(db, COL.sessions, sessionId);
+    const ref = doc(db, COL.sessions, sessionId.toUpperCase());
     const snap = await tx.get(ref);
     if (!snap.exists()) throw new Error("Session missing");
     const s = snap.data() as Session;
@@ -136,23 +157,27 @@ export async function clearAll(sessionId: string, keepNames: boolean) {
 }
 
 export async function setLocked(sessionId: string, locked: boolean) {
-  await assertHost(sessionId);
-  await updateDoc(doc(db, COL.sessions, sessionId), { locked });
+  const sid = sessionId.toUpperCase();
+  await assertHost(sid);
+  await updateDoc(doc(db, COL.sessions, sid), { locked });
 }
 
 export async function updateSessionCore(sessionId: string, patch: Partial<Session>) {
-  await assertHost(sessionId);
-  await updateDoc(doc(db, COL.sessions, sessionId), patch as any);
+  const sid = sessionId.toUpperCase();
+  await assertHost(sid);
+  await updateDoc(doc(db, COL.sessions, sid), patch as any);
 }
 
 export async function updatePlayerAvatar(sessionId: string, playerId: string, avatarDataUrl?: string) {
-  await assertHost(sessionId);
-  await updateDoc(doc(db, COL.sessions, sessionId, COL.players, playerId), {
+  const sid = sessionId.toUpperCase();
+  await assertHost(sid);
+  await updateDoc(doc(db, COL.sessions, sid, COL.players, playerId), {
     avatarDataUrl: avatarDataUrl ?? null,
   });
 }
 
 export async function deletePlayer(sessionId: string, playerId: string) {
-  await assertHost(sessionId);
-  await deleteDoc(doc(db, COL.sessions, sessionId, COL.players, playerId));
+  const sid = sessionId.toUpperCase();
+  await assertHost(sid);
+  await deleteDoc(doc(db, COL.sessions, sid, COL.players, playerId));
 }

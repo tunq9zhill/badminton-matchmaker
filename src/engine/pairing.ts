@@ -11,19 +11,18 @@ export function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
-export function buildInitialTeams(session: Session, players: Player[]): { teams: Team[]; warnings: string[] } {
+export function buildInitialTeams(_session: Session, players: Player[]): { teams: Team[]; warnings: string[] } {
   const warnings: string[] = [];
   const pool = shuffle(players);
 
   const teams: Team[] = [];
-  const oddMode = session.config.oddMode;
 
   if (pool.length < 4) {
     warnings.push("Need at least 4 players to start doubles matches.");
     return { teams, warnings };
   }
 
-  if (pool.length % 2 === 0 || oddMode === "none") {
+  if (pool.length % 2 === 0) {
     for (let i = 0; i + 1 < pool.length; i += 2) {
       teams.push({
         id: nanoid(8),

@@ -17,4 +17,6 @@ export type ResultRow = {
   isFallback?: boolean;
   scoreA?: number | null;
   scoreB?: number | null;
+  teamAPlayedPlayerIds?: string[];
+  teamBPlayedPlayerIds?: string[];
 };

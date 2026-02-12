@@ -3,235 +3,66 @@ import { ensureAnonAuth } from "../app/firebase";
 import { useFirestoreConnectionPing } from "../app/connection";
 import { Card, CardBody, CardHeader } from "../ui/Card";
 import { Chip } from "../ui/Chip";
-import { Modal } from "../ui/Modal";
-import {
-  subscribeSession, subscribePlayers, subscribeTeams, subscribeCourts, subscribeMatches, subscribeRecentResults
-} from "../features/session/api";
+import { subscribeSession, subscribePlayers, subscribeTeams, subscribeCourts, subscribeMatches, subscribeRecentResults } from "../features/session/api";
 import type { Match, Player, Session, Team, Court } from "../app/types";
 import type { ResultRow } from "../features/session/schema";
 
-export function Viewer(props: { sessionId: string }) {
-  const conn = useFirestoreConnectionPing();
+type SortMode = "wins" | "losses" | "played";
 
+export function Viewer(props: { sessionId: string }) {
+  const sid = props.sessionId.toUpperCase();
+  const conn = useFirestoreConnectionPing();
   const [session, setSession] = useState<Session | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
   const [courts, setCourts] = useState<Court[]>([]);
   const [matches, setMatches] = useState<Match[]>([]);
-  const [results, setResults] = useState<any[]>([]);
-  const [selectedImage, setSelectedImage] = useState<{ name: string; url: string } | null>(null);
+  const [results, setResults] = useState<ResultRow[]>([]);
+  const [sortMode, setSortMode] = useState<SortMode>("wins");
 
   useEffect(() => { ensureAnonAuth().catch(()=>{}); }, []);
-  useEffect(() => subscribeSession(props.sessionId, setSession), [props.sessionId]);
-  useEffect(() => subscribePlayers(props.sessionId, setPlayers), [props.sessionId]);
-  useEffect(() => subscribeTeams(props.sessionId, setTeams), [props.sessionId]);
-  useEffect(() => subscribeCourts(props.sessionId, setCourts), [props.sessionId]);
-  useEffect(() => subscribeMatches(props.sessionId, setMatches), [props.sessionId]);
-  useEffect(() => subscribeRecentResults(props.sessionId, setResults), [props.sessionId]);
+  useEffect(() => subscribeSession(sid, setSession), [sid]);
+  useEffect(() => subscribePlayers(sid, setPlayers), [sid]);
+  useEffect(() => subscribeTeams(sid, setTeams), [sid]);
+  useEffect(() => subscribeCourts(sid, setCourts), [sid]);
+  useEffect(() => subscribeMatches(sid, setMatches), [sid]);
+  useEffect(() => subscribeRecentResults(sid, setResults), [sid]);
 
   const teamById = useMemo(() => new Map(teams.map((t) => [t.id, t])), [teams]);
   const playerById = useMemo(() => new Map(players.map((p) => [p.id, p])), [players]);
   const matchById = useMemo(() => new Map(matches.map((m) => [m.id, m])), [matches]);
-
-  const leaderboard = useMemo(() => {
-    const rows = [...teams].sort((a, b) => (b.stats.wins - b.stats.losses) - (a.stats.wins - a.stats.losses));
-    return rows.slice(0, 12);
-  }, [teams]);
+  const sortedPlayers = useMemo(() => [...players].sort((a,b)=>b.stats[sortMode]-a.stats[sortMode]), [players, sortMode]);
 
   return (
     <div className="mx-auto max-w-md p-4 space-y-3">
+      <button className="text-xs font-semibold text-slate-700" onClick={() => { history.pushState({}, "", "/"); window.dispatchEvent(new PopStateEvent("popstate")); }}>ย้อนกลับ</button>
       <div className="flex items-center justify-between pt-2">
-        <div>
-          <div className="text-xl font-bold">Live Viewer</div>
-          <div className="text-xs text-slate-500">Session: <span className="font-mono">{props.sessionId}</span></div>
-        </div>
-        <div className="text-right space-y-1">
-          <Chip tone="warn">Read-only</Chip>
-          <Chip tone={conn === "ok" ? "good" : conn === "offline" ? "warn" : "muted"}>
-            {conn === "ok" ? "Connected" : conn === "offline" ? "Offline" : "Connecting"}
-          </Chip>
-        </div>
+        <div><div className="text-xl font-bold">Viewer</div><div className="text-xs">Session: <span className="font-mono">{sid}</span></div></div>
+        <div className="space-y-1 text-right"><Chip tone="warn">Read-only</Chip><Chip tone={conn==="ok"?"good":"warn"}>{conn}</Chip></div>
       </div>
 
-      <Card>
-        <CardHeader title="Players (from Host)" />
-        <CardBody className="space-y-2 max-h-64">
-          {players.map((p) => (
-            <div key={p.id} className="rounded-xl border border-slate-100 px-3 py-2 text-sm">
-              <PlayerIdentity player={p} onOpenImage={(url: string) => setSelectedImage({ name: p.name, url })} />
-              <div className="text-xs text-slate-500 mt-1">W {p.stats.wins} · L {p.stats.losses} · played {p.stats.played}</div>
-              {/* <div className="flex items-center gap-3">
-                {p.avatarDataUrl ? (
-                  <button
-                    type="button"
-                    className="h-10 w-10 overflow-hidden rounded-full border border-slate-200"
-                    onClick={() => setSelectedImage({ name: p.name, url: p.avatarDataUrl! })}
-                    title={`Open ${p.name} profile`}
-                  >
-                    <img src={p.avatarDataUrl} alt={`avatar-${p.name}`} className="h-full w-full object-cover" />
-                  </button>
-                ) : (
-                  <div className="h-10 w-10 rounded-full border border-dashed border-slate-300 bg-slate-50" />
-                )}
-                <div>
-                  <div className="font-semibold">{p.name}</div>
-                  <div className="text-xs text-slate-500">W {p.stats.wins} · L {p.stats.losses} · played {p.stats.played}</div>
-                </div>
-              </div> */}
-            </div>
-          ))}
-          {players.length === 0 && <div className="text-sm text-slate-500">No players yet.</div>}
-        </CardBody>
-      </Card>
+      <Card><CardHeader title="Share Session" /><CardBody><div className="text-3xl font-black tracking-[0.35em] text-center">{sid}</div></CardBody></Card>
 
-      <Card>
-        <CardHeader title="Courts" />
-        <CardBody className="space-y-3">
-          {courts.map((c) => {
-            const m = c.currentMatchId ? matchById.get(c.currentMatchId) : undefined;
-            const a = m ? teamById.get(m.teamAId) : undefined;
-            const b = m ? teamById.get(m.teamBId) : undefined;
-            return (
-              <div key={c.id} className="rounded-2xl border border-slate-200 p-3">
-                <div className="flex items-center justify-between">
-                  <div className="font-semibold">Court {c.id}</div>
-                  <Chip tone={m?.status === "in_progress" ? "good" : m ? "muted" : "warn"}>
-                    {m ? m.status : "idle"}
-                  </Chip>
-                </div>
-                {m ? (
-                  <div className="mt-2 text-sm font-semibold flex flex-wrap gap-5">
-                    <TeamLine team={a} playerById={playerById} onOpenImage={(name: string, url: string) => setSelectedImage({ name, url })} />
-                    <div className="text-slate-400 text-center">vs</div>
-                    <TeamLine team={b} playerById={playerById} onOpenImage={(name: string, url: string) => setSelectedImage({ name, url })} />
-                    {m.isFallback ? <span className="text-xs text-amber-700">(fallback)</span> : null}
-                  </div>
-                ) : (
-                  <div className="mt-2 text-sm text-slate-500">Waiting for a valid match…</div>
-                )}
-              </div>
-            );
-          })}
-        </CardBody>
-      </Card>
+      <Card><CardHeader title="Courts" /><CardBody className="space-y-2">{courts.map((c)=>{
+        const m=c.currentMatchId?matchById.get(c.currentMatchId):undefined;
+        const a=m?teamById.get(m.teamAId):undefined; const b=m?teamById.get(m.teamBId):undefined;
+        return <div key={c.id} className="rounded-xl border p-2"><div>Court {c.id}</div>{m?<><div>{fmtTeam(a,playerById)}</div><div className="text-center">vs</div><div>{fmtTeam(b,playerById)}</div></>:<div className="text-xs text-slate-500">idle</div>}</div>;
+      })}</CardBody></Card>
 
-      <Card>
-        <CardHeader title="Queue" />
-        <CardBody className="space-y-2">
-          {(session?.queueTeams ?? []).map((tid) => {
-            const t = teamById.get(tid);
-            return (
-              <div key={tid} className="rounded-xl border border-slate-100 px-3 py-2">
-                <TeamLine team={t} playerById={playerById} onOpenImage={(name: string, url: string) => setSelectedImage({ name, url })} />
-                <div className="text-xs text-slate-500">played {t?.stats.played ?? 0}</div>
-              </div>
-            );
-          })}
-          {(session?.queueTeams ?? []).length === 0 && <div className="text-sm text-slate-500">Queue empty.</div>}
-        </CardBody>
-      </Card>
+      <Card><CardHeader title="Queue" /><CardBody>{(session?.queueTeams ?? []).map((tid) => <div key={tid} className="text-sm">{fmtTeam(teamById.get(tid), playerById)}</div>)}</CardBody></Card>
 
-      <Card>
-        <CardHeader title="Leaderboard" />
-        <CardBody className="space-y-2">
-          {leaderboard.map((t) => (
-            <div key={t.id} className="rounded-xl border border-slate-100 px-3 py-2 text-sm">
-              <TeamLine team={t} playerById={playerById} onOpenImage={(name: string, url: string) => setSelectedImage({ name, url })} />
-              <div className="text-xs text-slate-500">W {t.stats.wins} · L {t.stats.losses} · played {t.stats.played}</div>
-            </div>
-          ))}
-          {leaderboard.length === 0 && <div className="text-sm text-slate-500">No teams yet.</div>}
-        </CardBody>
-      </Card>
+      <Card><CardHeader title="Recent Results" /><CardBody className="space-y-2">{results.map((r)=><div key={r.id} className="rounded-xl border px-3 py-2 text-sm"><div className="text-xs">Court {r.courtId}</div><ResultLine ids={r.teamAPlayedPlayerIds ?? teamById.get(r.teamAId)?.playerIds ?? []} p={playerById} win={r.winnerTeamId===r.teamAId} score={r.scoreA} /><div className="text-center">vs</div><ResultLine ids={r.teamBPlayedPlayerIds ?? teamById.get(r.teamBId)?.playerIds ?? []} p={playerById} win={r.winnerTeamId===r.teamBId} score={r.scoreB} /></div>)}</CardBody></Card>
 
-      <Card>
-        <CardHeader title="Recent Results" />
-        <CardBody className="space-y-2">
-          {results.map((r) => {
-            const ta = teamById.get(r.teamAId);
-            const tb = teamById.get(r.teamBId);
-            const win = r.winnerTeamId;
-            return (
-              <div key={r.id} className="rounded-xl border border-slate-100 px-3 py-2 text-sm">
-                <div className="text-xs text-slate-500">Court {r.courtId}</div>
-                <TeamLine team={ta} playerById={playerById} onOpenImage={(name: string, url: string) => setSelectedImage({ name, url })} />
-                <div className="text-center text-slate-400">vs</div>
-                <TeamLine team={tb} playerById={playerById} onOpenImage={(name: string, url: string) => setSelectedImage({ name, url })} />
-                <div className="text-xs text-slate-600 mt-1">
-                  Winner: {win === r.teamAId ? fmtTeam(ta, playerById) : fmtTeam(tb, playerById)}
-                  {r.isFallback ? " · fallback" : ""}
-                  <span className="font-semibold"> {winnerLoserScore(r) ? `(${winnerLoserScore(r)})` : ""}</span>
-                </div>
-              </div>
-            );
-          })}
-          {results.length === 0 && <div className="text-sm text-slate-500">No results yet.</div>}
-        </CardBody>
-      </Card>
-
-      {selectedImage && (
-        <Modal title={selectedImage.name} onClose={() => setSelectedImage(null)}>
-          <div className="flex justify-center">
-            <img src={selectedImage.url} alt={selectedImage.name} className="max-h-[70vh] w-auto rounded-xl border border-slate-200" />
-          </div>
-        </Modal>
-      )}
-    </div>
-  );
-}
-
-function TeamLine(props: {
-  team: Team | undefined;
-  playerById: Map<string, Player>;
-  onOpenImage: (name: string, url: string) => void;
-}) {
-  if (!props.team) return <div className="font-semibold">—</div>;
-
-  return (
-    <div className="flex flex-wrap items-center gap-1">
-      {props.team.playerIds.map((id, i) => {
-        const p = props.playerById.get(id);
-        if (!p) return <span key={id} className="font-semibold">?</span>;
-        return (
-          <div key={id} className="inline-flex items-center gap-1">
-            <PlayerIdentity player={p} compact onOpenImage={(url) => props.onOpenImage(p.name, url)} />
-            {i < props.team!.playerIds.length - 1 && <span className="text-slate-400">+</span>}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function PlayerIdentity(props: { player: Player; compact?: boolean; onOpenImage: (url: string) => void }) {
-  const avatarSize = props.compact ? "h-6 w-6" : "h-10 w-10";
-  return (
-    <div className="inline-flex items-center gap-2">
-      {props.player.avatarDataUrl ? (
-        <button
-          type="button"
-          className={`${avatarSize} overflow-hidden rounded-full border border-slate-200`}
-          onClick={() => props.onOpenImage(props.player.avatarDataUrl!)}
-        >
-          <img src={props.player.avatarDataUrl} alt={`avatar-${props.player.name}`} className="h-full w-full object-cover" />
-        </button>
-      ) : (
-        <div className={`${avatarSize} rounded-full border border-dashed border-slate-300 bg-slate-50`} />
-      )}
-      <span className="font-semibold">{props.player.name}</span>
+      <Card><CardHeader title="Player Table" right={<div className="flex gap-1 text-xs">{(["wins","losses","played"] as SortMode[]).map((m) => <button key={m} className="underline" onClick={() => setSortMode(m)}>{m}</button>)}</div>} /><CardBody>{sortedPlayers.map((p)=><div key={p.id} className="grid grid-cols-4 text-sm"><span>{p.name}</span><span>W {p.stats.wins}</span><span>L {p.stats.losses}</span><span>P {p.stats.played}</span></div>)}</CardBody></Card>
     </div>
   );
 }
 
 function fmtTeam(team: Team | undefined, playerById: Map<string, Player>) {
-  if (!team) return "—";
+  if (!team) return "-";
   return team.playerIds.map((id) => playerById.get(id)?.name ?? "?").join(" + ");
 }
 
-function winnerLoserScore(r: ResultRow) {
-  if (r.scoreA == null || r.scoreB == null) return "";
-  const a = r.scoreA, b = r.scoreB;
-  const win = r.winnerTeamId === r.teamAId ? a : b;
-  const lose = r.winnerTeamId === r.teamAId ? b : a;
-  return `${win}–${lose}`;
+function ResultLine(props: { ids: string[]; p: Map<string, Player>; win: boolean; score?: number | null }) {
+  return <div className={`inline-flex gap-2 rounded-full px-2 py-1 ${props.win ? "border-2 border-emerald-500" : "border border-slate-200"}`}><span>{props.ids.map((id) => props.p.get(id)?.name ?? "?").join(" + ")}</span><span className="font-bold">{props.score ?? "-"}</span></div>;
 }

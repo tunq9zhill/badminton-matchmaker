@@ -10,7 +10,7 @@ export type Session = {
   config: {
     courtCount: number;
     scoring: 21;
-    oddMode: "three_player_rotation" | "none";
+    oddMode: "three_player_rotation";
   };
 
   activeTeams: string[];
