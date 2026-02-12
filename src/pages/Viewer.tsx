@@ -40,6 +40,7 @@ export function Viewer(props: { sessionId: string }) {
 
   return (
     <div className="mx-auto max-w-md p-4 space-y-3">
+      <button className="text-xs font-semibold text-slate-700" onClick={() => { history.pushState({}, "", "/"); window.dispatchEvent(new PopStateEvent("popstate")); }}>← Back</button>
       <div className="flex items-center justify-between pt-2">
         <div>
           <div className="text-xl font-bold">Live Viewer</div>
@@ -154,13 +155,12 @@ export function Viewer(props: { sessionId: string }) {
             return (
               <div key={r.id} className="rounded-xl border border-slate-100 px-3 py-2 text-sm">
                 <div className="text-xs text-slate-500">Court {r.courtId}</div>
-                <TeamLine team={ta} playerById={playerById} onOpenImage={(name: string, url: string) => setSelectedImage({ name, url })} />
+                <TeamLine team={ta} playerById={playerById} onOpenImage={(name: string, url: string) => setSelectedImage({ name, url })} playedIds={r.teamAPlayedPlayerIds} highlightWinner={win === r.teamAId} />
                 <div className="text-center text-slate-400">vs</div>
-                <TeamLine team={tb} playerById={playerById} onOpenImage={(name: string, url: string) => setSelectedImage({ name, url })} />
+                <TeamLine team={tb} playerById={playerById} onOpenImage={(name: string, url: string) => setSelectedImage({ name, url })} playedIds={r.teamBPlayedPlayerIds} highlightWinner={win === r.teamBId} />
                 <div className="text-xs text-slate-600 mt-1">
-                  Winner: {win === r.teamAId ? fmtTeam(ta, playerById) : fmtTeam(tb, playerById)}
+                  <span className="font-semibold">{formatScoreByTeam(r)}</span>
                   {r.isFallback ? " · fallback" : ""}
-                  <span className="font-semibold"> {winnerLoserScore(r) ? `(${winnerLoserScore(r)})` : ""}</span>
                 </div>
               </div>
             );
@@ -168,6 +168,8 @@ export function Viewer(props: { sessionId: string }) {
           {results.length === 0 && <div className="text-sm text-slate-500">No results yet.</div>}
         </CardBody>
       </Card>
+
+      <StatsTable players={players} />
 
       {selectedImage && (
         <Modal title={selectedImage.name} onClose={() => setSelectedImage(null)}>
@@ -184,12 +186,14 @@ function TeamLine(props: {
   team: Team | undefined;
   playerById: Map<string, Player>;
   onOpenImage: (name: string, url: string) => void;
+  playedIds?: string[];
+  highlightWinner?: boolean;
 }) {
   if (!props.team) return <div className="font-semibold">—</div>;
 
   return (
-    <div className="flex flex-wrap items-center gap-1">
-      {props.team.playerIds.map((id, i) => {
+    <div className={`flex flex-wrap items-center gap-1 rounded-full px-2 py-1 ${props.highlightWinner ? "border-2 border-emerald-500" : ""}`}>
+      {(props.playedIds ?? props.team.playerIds).map((id, i) => {
         const p = props.playerById.get(id);
         if (!p) return <span key={id} className="font-semibold">?</span>;
         return (
@@ -223,15 +227,30 @@ function PlayerIdentity(props: { player: Player; compact?: boolean; onOpenImage:
   );
 }
 
-function fmtTeam(team: Team | undefined, playerById: Map<string, Player>) {
-  if (!team) return "—";
-  return team.playerIds.map((id) => playerById.get(id)?.name ?? "?").join(" + ");
+function formatScoreByTeam(r: ResultRow) {
+  if (r.scoreA == null || r.scoreB == null) return "No score";
+  return `Team A ${r.scoreA} - Team B ${r.scoreB}`;
 }
 
-function winnerLoserScore(r: ResultRow) {
-  if (r.scoreA == null || r.scoreB == null) return "";
-  const a = r.scoreA, b = r.scoreB;
-  const win = r.winnerTeamId === r.teamAId ? a : b;
-  const lose = r.winnerTeamId === r.teamAId ? b : a;
-  return `${win}–${lose}`;
+function StatsTable(props: { players: Player[] }) {
+  const [sortBy, setSortBy] = useState<"wins"|"losses"|"played">("wins");
+  const rows = [...props.players].sort((a,b)=>b.stats[sortBy]-a.stats[sortBy]);
+  return (
+    <Card>
+      <CardHeader title="Stats Table" />
+      <CardBody className="space-y-2">
+        <div className="flex gap-2">
+          <button className={`rounded-full border px-2 py-1 text-xs ${sortBy==="wins"?"bg-slate-900 text-white":""}`} onClick={()=>setSortBy("wins")}>Wins</button>
+          <button className={`rounded-full border px-2 py-1 text-xs ${sortBy==="losses"?"bg-slate-900 text-white":""}`} onClick={()=>setSortBy("losses")}>Losses</button>
+          <button className={`rounded-full border px-2 py-1 text-xs ${sortBy==="played"?"bg-slate-900 text-white":""}`} onClick={()=>setSortBy("played")}>Played</button>
+        </div>
+        <div className="rounded-xl border border-slate-200 overflow-hidden">
+          <table className="w-full text-xs">
+            <thead className="bg-slate-100"><tr><th className="p-2 text-left">Player</th><th className="p-2">W</th><th className="p-2">L</th><th className="p-2">P</th></tr></thead>
+            <tbody>{rows.map((p)=><tr key={p.id} className="border-t"><td className="p-2">{p.name}</td><td className="p-2 text-center">{p.stats.wins}</td><td className="p-2 text-center">{p.stats.losses}</td><td className="p-2 text-center">{p.stats.played}</td></tr>)}</tbody>
+          </table>
+        </div>
+      </CardBody>
+    </Card>
+  );
 }
