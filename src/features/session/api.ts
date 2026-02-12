@@ -50,6 +50,11 @@ export function subscribeSession(sessionId: string, cb: (s: Session | null) => v
   });
 }
 
+export async function sessionExists(sessionId: string) {
+  const snap = await getDoc(doc(db, COL.sessions, sessionId));
+  return snap.exists();
+}
+
 export function subscribePlayers(sessionId: string, cb: (rows: Player[]) => void) {
   return onSnapshot(collection(db, COL.sessions, sessionId, COL.players), (snap) => {
     cb(snap.docs.map((d) => d.data() as Player));

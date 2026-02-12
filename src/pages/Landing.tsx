@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Card, CardBody, CardHeader } from "../ui/Card";
 import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
-import { createSession } from "../features/session/api";
+import { createSession, sessionExists } from "../features/session/api";
 import { useAppStore } from "../app/store";
 import { nanoid } from "nanoid";
+import { Modal } from "../ui/Modal";
 
 type LandingMode = "home" | "create" | "viewer";
 
@@ -26,7 +27,14 @@ export function Landing() {
   const [courtCount, setCourtCount] = useState("2");
   const [viewerCode, setViewerCode] = useState(Array(6).fill(""));
   const [slideIndex, setSlideIndex] = useState(0);
+  const [joining, setJoining] = useState(false);
+  const [scanOpen, setScanOpen] = useState(false);
+  const [scanError, setScanError] = useState("");
+  const [cameraReady, setCameraReady] = useState(false);
   const setToast = useAppStore((s) => s.setToast);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const otpRefs = useRef<Array<HTMLInputElement | null>>([]);
+  const scanLockRef = useRef(false);
 
   useEffect(() => {
     if (mode !== "home") return;
@@ -43,14 +51,117 @@ export function Landing() {
 
   const codeValue = viewerCode.join("");
 
-  const moveToViewer = () => {
-    if (!/^[A-Z0-9]{6}$/.test(codeValue)) {
+
+  const setOtpAt = (idx: number, value: string) => {
+    setViewerCode((prev) => {
+      const next = [...prev];
+      next[idx] = value;
+      return next;
+    });
+  };
+
+  const focusOtp = (idx: number) => {
+    otpRefs.current[idx]?.focus();
+    otpRefs.current[idx]?.select();
+  };
+
+  const moveToViewer = async (candidate?: string) => {
+    if (joining) return;
+    const finalCode = (candidate ?? codeValue).toUpperCase();
+
+    if (!/^[A-Z0-9]{6}$/.test(finalCode)) {
       setToast({ id: nanoid(), kind: "error", message: "Session code ต้องมี 6 ตัว" });
       return;
     }
-    history.pushState({}, "", `/s/${codeValue}`);
-    window.dispatchEvent(new PopStateEvent("popstate"));
+    try {
+      setJoining(true);
+      const exists = await sessionExists(finalCode);
+      if (!exists) {
+        setToast({ id: nanoid(), kind: "error", message: "ไม่เจอ Session" });
+        return;
+      }
+      history.pushState({}, "", `/s/${finalCode}`);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    } catch (e: any) {
+      setToast({ id: nanoid(), kind: "error", message: e?.message ?? "เช็ค Session ไม่สำเร็จ" });
+    } finally {
+      setJoining(false);
+    }
   };
+
+  useEffect(() => {
+    if (mode === "viewer" && codeValue.length === 6 && /^[A-Z0-9]{6}$/.test(codeValue)) {
+      void moveToViewer(codeValue);
+    }
+  }, [codeValue, mode]);
+
+  useEffect(() => {
+    if (!scanOpen) return;
+    if (!("mediaDevices" in navigator)) {
+      setScanError("อุปกรณ์นี้ไม่รองรับกล้อง");
+      return;
+    }
+
+    let stream: MediaStream | null = null;
+    let detector: BarcodeDetector | null = null;
+    let timer: number | undefined;
+    let canceled = false;
+
+    const start = async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: "environment" } },
+          audio: false,
+        });
+        if (!videoRef.current) return;
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+        if (canceled) return;
+        setCameraReady(true);
+        setScanError("");
+
+        if (!("BarcodeDetector" in window)) {
+          setScanError("เบราว์เซอร์นี้ไม่รองรับการสแกน QR อัตโนมัติ");
+          return;
+        }
+        detector = new BarcodeDetector({ formats: ["qr_code"] });
+        timer = window.setInterval(async () => {
+          if (!videoRef.current || !detector || scanLockRef.current) return;
+          try {
+            const results = await detector.detect(videoRef.current);
+            const raw = results[0]?.rawValue?.trim();
+            if (!raw) return;
+
+            const parsed = extractCodeFromRaw(raw);
+            if (!parsed) {
+              setScanError("QR นี้ไม่มี Session code ที่ถูกต้อง");
+              return;
+            }
+
+            scanLockRef.current = true;
+            const next = parsed.split("");
+            setViewerCode(next);
+            setScanOpen(false);
+          } catch {
+            // ignore transient scan errors
+          }
+        }, 500);
+      } catch {
+        if (!canceled) setScanError("ไม่สามารถเปิดกล้องได้");
+      }
+    };
+
+    void start();
+    return () => {
+      canceled = true;
+      if (timer) window.clearInterval(timer);
+      scanLockRef.current = false;
+      setCameraReady(false);
+      if (stream) {
+        stream.getTracks().forEach((t) => t.stop());
+      }
+    };
+  }, [scanOpen]);
 
   if (mode === "create") {
     return (
@@ -107,23 +218,78 @@ export function Landing() {
                   maxLength={1}
                   className="h-12 w-11 rounded-xl border border-slate-200 text-center text-lg font-semibold uppercase"
                   onChange={(e) => {
-                    const ch = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
-                    const next = [...viewerCode];
-                    next[idx] = ch;
-                    setViewerCode(next);
-                    if (ch && idx < 5) {
-                      (document.getElementById(`otp-${idx + 1}`) as HTMLInputElement | null)?.focus();
+                    const ch = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(-1);
+                    setOtpAt(idx, ch);
+                    if (ch && idx < 5) focusOtp(idx + 1);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Backspace") {
+                      if (viewerCode[idx]) {
+                        setOtpAt(idx, "");
+                        return;
+                      }
+                      if (idx > 0) {
+                        setOtpAt(idx - 1, "");
+                        focusOtp(idx - 1);
+                        e.preventDefault();
+                      }
+                      return;
+                    }
+
+                    if (e.key === "ArrowLeft" && idx > 0) {
+                      focusOtp(idx - 1);
+                      e.preventDefault();
+                    }
+
+                    if (e.key === "ArrowRight" && idx < 5) {
+                      focusOtp(idx + 1);
+                      e.preventDefault();
                     }
                   }}
+                  onPaste={(e) => {
+                    const pasted = e.clipboardData
+                      .getData("text")
+                      .toUpperCase()
+                      .replace(/[^A-Z0-9]/g, "")
+                      .slice(0, 6 - idx);
+                    if (!pasted) return;
+                    e.preventDefault();
+
+                    setViewerCode((prev) => {
+                      const next = [...prev];
+                      for (let i = 0; i < pasted.length; i++) {
+                        next[idx + i] = pasted[i];
+                      }
+                      return next;
+                    });
+
+                    const target = Math.min(idx + pasted.length, 5);
+                    focusOtp(target);
+                  }}
+                  ref={(el) => { otpRefs.current[idx] = el; }}
                   id={`otp-${idx}`}
                 />
               ))}
             </div>
-            <Button onClick={moveToViewer} disabled={codeValue.length !== 6}>
+            <Button variant="secondary" onClick={() => setScanOpen(true)}>
+              เปิดกล้องสแกน QR
+            </Button>
+            <Button onClick={() => void moveToViewer()} disabled={codeValue.length !== 6 || joining}>
               Enter Viewer
             </Button>
           </CardBody>
         </Card>
+
+        {scanOpen && (
+          <Modal title="Scan Session QR" onClose={() => setScanOpen(false)}>
+            <div className="space-y-2">
+              <video ref={videoRef} className="w-full rounded-xl border border-slate-200 bg-slate-900" playsInline muted />
+              {!cameraReady && <div className="text-xs text-slate-500">กำลังเปิดกล้อง...</div>}
+              {scanError && <div className="text-xs text-rose-600">{scanError}</div>}
+              <div className="text-xs text-slate-500">นำ QR จากหน้า Host มาไว้ในกรอบภาพ</div>
+            </div>
+          </Modal>
+        )}
       </div>
     );
   }
@@ -158,4 +324,20 @@ export function Landing() {
       </Card>
     </div>
   );
+}
+
+function extractCodeFromRaw(raw: string) {
+  const direct = raw.toUpperCase().match(/^[A-Z0-9]{6}$/)?.[0];
+  if (direct) return direct;
+
+  try {
+    const url = new URL(raw);
+    const pathMatch = url.pathname.match(/\/s\/([A-Z0-9]{6})/i)?.[1];
+    if (pathMatch) return pathMatch.toUpperCase();
+  } catch {
+    // ignore malformed URL
+  }
+
+  const fallback = raw.toUpperCase().match(/([A-Z0-9]{6})/)?.[1];
+  return fallback ?? "";
 }
