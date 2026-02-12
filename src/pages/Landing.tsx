@@ -9,9 +9,16 @@ import { nanoid } from "nanoid";
 type LandingMode = "home" | "create" | "viewer";
 
 const carouselImages = [
-  "https://images.unsplash.com/photo-1521587760476-6c12a4b040da?auto=format&fit=crop&w=1200&q=80",
-  "https://images.unsplash.com/photo-1486286701208-1d58e9338013?auto=format&fit=crop&w=1200&q=80",
-  "https://images.unsplash.com/photo-1534158914592-062992fbe900?auto=format&fit=crop&w=1200&q=80",
+  "./public/ImageCarousel/1.jpg",
+  "./public/ImageCarousel/2.jpg",
+  "./public/ImageCarousel/3.jpg",
+  "./public/ImageCarousel/4.jpg",
+  "./public/ImageCarousel/5.jpg",
+  "./public/ImageCarousel/6.jpg",
+  "./public/ImageCarousel/7.jpg",
+  "./public/ImageCarousel/8.jpg",
+  "./public/ImageCarousel/9.jpg",
+  "./public/ImageCarousel/10.jpg",
 ];
 
 export function Landing() {

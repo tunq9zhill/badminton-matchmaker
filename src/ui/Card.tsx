@@ -14,6 +14,7 @@ export function CardHeader(props: { title: string; right?: ReactNode }) {
       <div className="text-sm font-semibold">{props.title}</div>
       {props.right}
     </div>
+    
   );
 }
 

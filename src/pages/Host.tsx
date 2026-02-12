@@ -76,14 +76,17 @@ export function Host(props: { sessionId: string; secret?: string }) {
         </button>
       <div className="flex items-center justify-between pt-2">
         <div>
-          <div className="text-xl font-bold">Host</div>
+          <div className="flex justify-start items-center gap-1">
+            <div className="text-xl font-bold">Host</div>
+            <div className="flex justify-end scale-75"><PlayerCountChip count={players.length} /></div>
+          </div>
           <div className="text-xs text-slate-500">Session: <span className="font-mono">{props.sessionId}</span></div>
         </div>
         <div className="text-right space-y-1">
           <Chip tone={conn === "ok" ? "good" : conn === "offline" ? "warn" : "muted"}>
             {conn === "ok" ? "Connected" : conn === "offline" ? "Offline" : "Connecting"}
           </Chip>
-          <div className="flex justify-end"><PlayerCountChip count={players.length} /></div>
+        
           <div className="text-[11px] text-slate-500">Phase: {session?.phase ?? "-"}</div>
         </div>
       </div>
@@ -297,7 +300,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
                 {m ? (
                   <div className="mt-2 text-sm">
                     <div className="font-semibold">
-                      <div className=" mt-2 text-sm font-semibold flex flex-wrap gap-5"><TeamLine team={a} playerById={playerById} /><div className="text-slate-400">vs</div><TeamLine team={b} playerById={playerById} /></div>
+                      <div className=" mt-2 text-sm font-semibold flex flex-wrap gap-5"><TeamLine team={a} playerById={playerById} /><div className="text-slate-400 flex items-center">vs</div><TeamLine team={b} playerById={playerById} /></div>
                       {m.isFallback ? <span className="ml-2 text-xs text-amber-700">(fallback)</span> : null}
                     </div>
 
@@ -536,7 +539,7 @@ function TeamLine(props: { team: Team | undefined; playerById: (id: string) => P
   if (!props.team) return <div className="font-semibold">—</div>;
 
   return (
-    <div className={`flex flex-wrap items-center gap-1 font-semibold rounded-full px-2 py-1 ${props.highlightWinner ? "border-2 border-emerald-500" : ""}`}>
+    <div className={`flex flex-wrap items-center gap-1 font-semibold rounded-full px-2 py-1 ${props.highlightWinner ? "bg-green-50 border border-green-500" : ""}`}>
       {(props.playedIds ?? props.team.playerIds).map((id, idx) => {
         const p = props.playerById(id);
         return (
