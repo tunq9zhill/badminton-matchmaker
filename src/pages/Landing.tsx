@@ -55,18 +55,7 @@ function loadJsQrDecoder(): Promise<JsQrDecoder | null> {
   return jsQrLoaderPromise;
 }
 
-const carouselImages = [
-  "./public/ImageCarousel/1.jpg",
-  "./public/ImageCarousel/2.jpg",
-  "./public/ImageCarousel/3.jpg",
-  "./public/ImageCarousel/4.jpg",
-  "./public/ImageCarousel/5.jpg",
-  "./public/ImageCarousel/6.jpg",
-  "./public/ImageCarousel/7.jpg",
-  "./public/ImageCarousel/8.jpg",
-  "./public/ImageCarousel/9.jpg",
-  "./public/ImageCarousel/10.jpg",
-];
+const carouselImages = Array.from({ length: 10 }, (_, i) => `${import.meta.env.BASE_URL}ImageCarousel/${i + 1}.jpg`);
 
 export function Landing() {
   const [mode, setMode] = useState<LandingMode>("home");
