@@ -106,13 +106,33 @@ export function Landing() {
     let detector: BarcodeDetector | null = null;
     let timer: number | undefined;
     let canceled = false;
+    let videoTrack: MediaStreamTrack | null = null;
+    let imageCapture: ImageCapture | null = null;
+
+    const detectFromSource = async () => {
+      if (scanLockRef.current || !detector) return "";
+      if (videoRef.current) {
+        const results = await detector.detect(videoRef.current);
+        return results[0]?.rawValue?.trim() ?? "";
+      }
+      if (imageCapture) {
+        const bitmap = await (imageCapture as any).grabFrame();
+        const results = await detector.detect(bitmap);
+        return results[0]?.rawValue?.trim() ?? "";
+      }
+      return "";
+    };
 
     const start = async () => {
       try {
         stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: "environment" } },
+          video: { facingMode: "environment" },
           audio: false,
         });
+        videoTrack = stream.getVideoTracks()[0] ?? null;
+        if (videoTrack && "ImageCapture" in window) {
+          imageCapture = new ImageCapture(videoTrack);
+        }
         if (!videoRef.current) return;
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
@@ -120,16 +140,27 @@ export function Landing() {
         setCameraReady(true);
         setScanError("");
 
-        if (!("BarcodeDetector" in window)) {
+        const BarcodeDetectorCtor = (globalThis as any).BarcodeDetector as
+          | (new (options?: BarcodeDetectorOptions) => BarcodeDetector)
+          | undefined;
+        if (!BarcodeDetectorCtor) {
           setScanError("เบราว์เซอร์นี้ไม่รองรับการสแกน QR อัตโนมัติ");
           return;
         }
-        detector = new BarcodeDetector({ formats: ["qr_code"] });
+
+        const supportsFormat = typeof (BarcodeDetectorCtor as any).getSupportedFormats === "function"
+          ? await (BarcodeDetectorCtor as any).getSupportedFormats()
+          : [];
+        if (supportsFormat.length > 0 && !supportsFormat.includes("qr_code")) {
+          setScanError("เบราว์เซอร์นี้ไม่รองรับการสแกน QR อัตโนมัติ");
+          return;
+        }
+
+        detector = new BarcodeDetectorCtor({ formats: ["qr_code"] });
         timer = window.setInterval(async () => {
-          if (!videoRef.current || !detector || scanLockRef.current) return;
+          if (!detector || scanLockRef.current) return;
           try {
-            const results = await detector.detect(videoRef.current);
-            const raw = results[0]?.rawValue?.trim();
+            const raw = await detectFromSource();
             if (!raw) return;
 
             const parsed = extractCodeFromRaw(raw);
