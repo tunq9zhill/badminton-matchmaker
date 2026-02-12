@@ -34,6 +34,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
   const [showFinish, setShowFinish] = useState<{ match: Match } | null>(null);
   const [winnerTeamId, setWinnerTeamId] = useState<string>("");
   const [uploadingPlayerId, setUploadingPlayerId] = useState<string | null>(null);
+  const [showQr, setShowQr] = useState(false);
 
   useEffect(() => {
     ensureAnonAuth().catch(() => { });
@@ -65,6 +66,8 @@ export function Host(props: { sessionId: string; secret?: string }) {
   const isMobile = typeof window !== "undefined" && window.matchMedia("(hover: none) and (pointer: coarse)").matches;
 
   const canStart = session && players.length >= 4 && teams.length === 0;
+  const viewerUrl = typeof window !== "undefined" ? `${window.location.origin}/s/${props.sessionId}` : `/s/${props.sessionId}`;
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=${encodeURIComponent(viewerUrl)}`;
 
   return (
     <div className="mx-auto max-w-md p-4 space-y-3">
@@ -94,10 +97,30 @@ export function Host(props: { sessionId: string; secret?: string }) {
       <Card>
         <CardHeader title="Share session" />
         <CardBody className="text-sm text-slate-600">
-          Session code: <span className="font-mono text-base font-bold tracking-[0.35em]">{props.sessionId}</span>
+          <div className="flex items-center gap-2">
+            <span>Session code: <span className="font-mono text-base font-bold tracking-[0.35em]">{props.sessionId}</span></span>
+            <button
+              type="button"
+              className="rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-700"
+              onClick={() => setShowQr(true)}
+            >
+              QR
+            </button>
+          </div>
           <div className="text-xs text-slate-500 mt-1">Viewer ใส่โค้ด 6 ตัวนี้เพื่อเข้าดูได้ทันที</div>
         </CardBody>
       </Card>
+
+      {showQr && (
+        <Modal title="Session QR" onClose={() => setShowQr(false)}>
+          <div className="space-y-2">
+            <div className="flex justify-center">
+              <img src={qrUrl} alt={`QR-${props.sessionId}`} className="rounded-xl border border-slate-200" />
+            </div>
+            <div className="text-center text-xs text-slate-500 font-mono">{viewerUrl}</div>
+          </div>
+        </Modal>
+      )}
 
       <Card>
         <CardHeader title="Players" right={isLocked ? <Chip>Locked</Chip> : <Chip tone="warn">Editable</Chip>} />
