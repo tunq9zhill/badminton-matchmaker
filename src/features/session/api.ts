@@ -112,6 +112,19 @@ export async function upsertPlayers(sessionId: string, names: string[]) {
   await b.commit();
 }
 
+export async function addPlayer(sessionId: string, payload: { name: string; avatarDataUrl?: string }) {
+  await assertHost(sessionId);
+  const id = nanoid(8);
+  const p: Player = {
+    id,
+    name: payload.name.trim(),
+    stats: { played: 0, wins: 0, losses: 0 },
+    avatarDataUrl: payload.avatarDataUrl,
+  };
+  await setDoc(doc(db, COL.sessions, sessionId, COL.players, id), p);
+  return id;
+}
+
 export async function clearAll(sessionId: string, keepNames: boolean) {
   await assertHost(sessionId);
   // For brevity we “soft reset” by recreating session core fields and deleting subcollections is omitted.
