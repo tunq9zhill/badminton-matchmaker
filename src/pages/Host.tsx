@@ -93,7 +93,8 @@ export function Host(props: { sessionId: string; secret?: string }) {
     return playedAllOnce || everyPairMet;
   }, [teams, session]);
 
-  const playersCardMaxClass = players.length > 0 ? "max-h-[430px]" : "";
+  const playersCardHeightClass = "h-[520px]";
+  const statsCardHeightClass = "h-[520px]";
 
   return (
     <div className="mx-auto max-w-md p-4 space-y-3">
@@ -120,7 +121,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
         </div>
       </div>
 
-      <Card className={players.length > 0 ? playersCardMaxClass : ""}>
+      <Card>
         <CardHeader title="Share session" />
         <CardBody className="text-sm text-slate-600">
           <div className="flex items-center gap-2">
@@ -148,9 +149,9 @@ export function Host(props: { sessionId: string; secret?: string }) {
         </Modal>
       )}
 
-      <Card className={players.length > 0 ? playersCardMaxClass : ""}>
+      <Card className={playersCardHeightClass}>
         <CardHeader title="Players" right={isLocked ? <Chip>Locked</Chip> : <Chip tone="warn">Editable</Chip>} />
-        <CardBody className="space-y-3 overflow-visible">
+        <CardBody className="flex h-full flex-col gap-3 overflow-hidden">
           {!isLocked && (
             <form
               className="flex gap-2"
@@ -226,7 +227,13 @@ export function Host(props: { sessionId: string; secret?: string }) {
                           await addPlayer(props.sessionId, { name: rp.name });
                           setToast({ id: nanoid(), kind: "success", message: `เพิ่ม ${rp.name} แล้ว` });
                         } catch (e2: any) {
-                          setToast({ id: nanoid(), kind: "error", message: e2?.message ?? e?.message ?? "เพิ่มผู้เล่นจาก Recent ไม่สำเร็จ" });
+                          try {
+                            const sameNameCount = players.filter((p) => p.name.replace(/\u200B/g, "") === rp.name).length;
+                            await addPlayer(props.sessionId, { name: `${rp.name}${"\u200B".repeat(Math.max(1, sameNameCount))}` });
+                            setToast({ id: nanoid(), kind: "success", message: `เพิ่ม ${rp.name} แล้ว` });
+                          } catch (e3: any) {
+                            setToast({ id: nanoid(), kind: "error", message: e3?.message ?? e2?.message ?? e?.message ?? "เพิ่มผู้เล่นจาก Recent ไม่สำเร็จ" });
+                          }
                         }
                       }
                     }}
@@ -238,7 +245,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
             </div>
           )}
 
-          <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+          <div className="min-h-0 flex-1 overflow-y-auto pr-1">
             <div className="space-y-2">
               {players.map((p) => (
                 <div key={p.id} className="rounded-xl border border-slate-100 px-3 py-2">
@@ -367,7 +374,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
       </Card>
 
 
-      <Card className={teams.length > 0 ? playersCardMaxClass : ""}>
+      <Card>
         <CardHeader title="Courts" right={coverageCompleted ? <Chip tone="good">จับคู่ครบแล้ว</Chip> : undefined} />
         <CardBody className="space-y-3">
           {courts.map((c) => {
@@ -433,7 +440,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
             <div className="pt-1 text-center">
               <button
                 type="button"
-                className="text-sm font-semibold text-slate-700 underline-offset-2 transition-colors hover:text-slate-900 hover:underline"
+                className="text-sm font-semibold text-sky-600 underline-offset-2 transition-colors hover:text-sky-700 hover:underline"
                 onClick={() => setConfirmResetPairing(true)}
               >
                 แนะนำจับคู่ใหม่
@@ -443,7 +450,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
         </CardBody>
       </Card>
 
-      <Card className={(session?.queueTeams?.length ?? 0) > 0 ? playersCardMaxClass : ""}>
+      <Card>
         <CardHeader title="Queue (available teams)" />
         <CardBody>
           <div className="text-sm text-slate-600 space-y-2">
@@ -465,7 +472,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
         </CardBody>
       </Card>
 
-      <Card className={results.length > 0 ? playersCardMaxClass : ""}>
+      <Card>
         <CardHeader title="Recent Results" />
         <CardBody className="space-y-2 ">
           {results.map((r) => {
@@ -492,7 +499,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
       </Card>
 
 
-      <StatsTable cardClassName={players.length > 0 ? playersCardMaxClass : ""} players={players} editable onReset={async () => {
+      <StatsTable cardClassName={statsCardHeightClass} players={players} editable onReset={async () => {
         try {
           await resetTableStats(props.sessionId);
           setToast({ id: nanoid(), kind: "success", message: "รีเซ็ตตารางสถิติแล้ว" });
@@ -501,7 +508,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
         }
       }} />
 
-      <Card className={players.length > 0 ? playersCardMaxClass : ""}>
+      <Card>
         <CardHeader title="รีเซ็ต" />
         <CardBody className="space-y-2">
           <Button
@@ -859,13 +866,13 @@ function StatsTable(props: { players: Player[]; editable?: boolean; onReset?: ()
         title="Stats Table"
         right={props.editable ? <button className="text-xs font-semibold text-rose-700" onClick={() => props.onReset?.()}>Reset table</button> : undefined}
       />
-      <CardBody className="space-y-2">
+      <CardBody className="flex h-full flex-col gap-2">
         <div className="flex gap-2">
           <button className={`rounded-full border px-2 py-1 text-xs ${sortBy === "wins" ? "bg-slate-900 text-white" : ""}`} onClick={() => setSortBy("wins")}>Wins</button>
           <button className={`rounded-full border px-2 py-1 text-xs ${sortBy === "losses" ? "bg-slate-900 text-white" : ""}`} onClick={() => setSortBy("losses")}>Losses</button>
           <button className={`rounded-full border px-2 py-1 text-xs ${sortBy === "played" ? "bg-slate-900 text-white" : ""}`} onClick={() => setSortBy("played")}>Played</button>
         </div>
-        <div className="rounded-xl border border-slate-200 overflow-hidden">
+        <div className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-slate-200">
           <table className="w-full text-xs">
             <thead className="bg-slate-100"><tr><th className="p-2 text-left">Player</th><th className="p-2">W</th><th className="p-2">L</th><th className="p-2">P</th></tr></thead>
             <tbody>{rows.map((p) => <tr key={p.id} className="border-t"><td className="p-2">{p.name}</td><td className="p-2 text-center">{p.stats.wins}</td><td className="p-2 text-center">{p.stats.losses}</td><td className="p-2 text-center">{p.stats.played}</td></tr>)}</tbody>
