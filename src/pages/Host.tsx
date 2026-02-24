@@ -10,16 +10,21 @@ import { nanoid } from "nanoid";
 import { useAppStore } from "../app/store";
 import {
   subscribeSession, subscribePlayers, subscribeTeams, subscribeCourts, subscribeMatches, subscribeRecentResults,
-  upsertPlayers, assertHost, updatePlayerAvatar, updateSessionCore
+  upsertPlayers, assertHost, updatePlayerAvatar, updateSessionCore, addPlayer
 } from "../features/session/api";
 import type { Match, Player, Session, Team, Court } from "../app/types";
 import { buildInitialTeams } from "../engine/pairing";
 import { setTeamsAndQueue, assignNextForCourt, finishMatch, startOnce, resetTableStats } from "../features/session/mutations";
 import { Modal } from "../ui/Modal";
 import type { ResultRow } from "../features/session/schema";
+import { ConfirmDrawer } from "../ui/ConfirmDrawer";
+import { clearRecentPlayers, readRecentPlayers, saveRecentPlayers, type RecentPlayer } from "../app/localCache";
 
 export function Host(props: { sessionId: string; secret?: string }) {
   const [confirmHome, setConfirmHome] = useState(false);
+  const [confirmResetPairing, setConfirmResetPairing] = useState(false);
+  const [confirmResetAll, setConfirmResetAll] = useState(false);
+  const [confirmCancelMatch, setConfirmCancelMatch] = useState<{ matchId: string; courtId: string } | null>(null);
   const conn = useFirestoreConnectionPing();
   const setToast = useAppStore((s) => s.setToast);
 
@@ -35,6 +40,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
   const [winnerTeamId, setWinnerTeamId] = useState<string>("");
   const [uploadingPlayerId, setUploadingPlayerId] = useState<string | null>(null);
   const [showQr, setShowQr] = useState(false);
+  const [recentPlayers, setRecentPlayers] = useState<RecentPlayer[]>(() => readRecentPlayers());
 
   useEffect(() => {
     ensureAnonAuth().catch(() => { });
@@ -68,6 +74,33 @@ export function Host(props: { sessionId: string; secret?: string }) {
   const canStart = session && players.length >= 4 && teams.length === 0;
   const viewerUrl = typeof window !== "undefined" ? `${window.location.origin}/s/${props.sessionId}` : `/s/${props.sessionId}`;
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=${encodeURIComponent(viewerUrl)}`;
+
+  useEffect(() => {
+    const merged: RecentPlayer[] = [...players]
+      .map((p) => ({ name: p.name, avatarDataUrl: p.avatarDataUrl, usedAt: Date.now() } as RecentPlayer))
+      .concat(recentPlayers)
+      .filter((p) => p.name.trim());
+    const dedup = Array.from(new Map(merged.map((p) => [p.name.toLowerCase(), p])).values()).slice(0, 12);
+    setRecentPlayers(dedup);
+    saveRecentPlayers(dedup);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [players]);
+
+  const coverageCompleted = useMemo(() => {
+    if (!teams.length) return false;
+    const playedAllOnce = teams.every((t) => t.stats.played > 0);
+    const everyPairMet = teams.every((a, i) => teams.slice(i + 1).every((b) => !!session?.metHistory?.[[a.id, b.id].sort().join("__")]));
+    return playedAllOnce || everyPairMet;
+  }, [teams, session]);
+
+  const playersCardHeightClass = players.length > 0 ? "h-[520px]" : "";
+  const statsCardHeightClass = players.length > 0 ? "h-[520px]" : "";
+
+  const removeRecentAfterAdd = (name: string) => {
+    const next = recentPlayers.filter((p) => p.name !== name);
+    setRecentPlayers(next);
+    saveRecentPlayers(next);
+  };
 
   return (
     <div className="mx-auto max-w-md p-4 space-y-3">
@@ -122,9 +155,9 @@ export function Host(props: { sessionId: string; secret?: string }) {
         </Modal>
       )}
 
-      <Card>
+      <Card className={playersCardHeightClass}>
         <CardHeader title="Players" right={isLocked ? <Chip>Locked</Chip> : <Chip tone="warn">Editable</Chip>} />
-        <CardBody className="space-y-3 overflow-visible">
+        <CardBody className="flex h-full flex-col gap-3 overflow-hidden">
           {!isLocked && (
             <form
               className="flex gap-2"
@@ -169,7 +202,59 @@ export function Host(props: { sessionId: string; secret?: string }) {
             </form>
           )}
 
-          <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+          {!isLocked && recentPlayers.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-semibold text-slate-600">Recent Players</div>
+                <button
+                  type="button"
+                  className="text-xs font-semibold text-rose-700 transition-colors hover:text-rose-600"
+                  onClick={() => {
+                    clearRecentPlayers();
+                    setRecentPlayers([]);
+                    setToast({ id: nanoid(), kind: "success", message: "ล้าง Recent Players แล้ว" });
+                  }}
+                >
+                  รีเซ็ต
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {recentPlayers.map((rp) => (
+                  <button
+                    key={rp.name}
+                    type="button"
+                    className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold transition-all duration-200 hover:bg-slate-50"
+                    onClick={async () => {
+                      try {
+                        await addPlayer(props.sessionId, { name: rp.name, avatarDataUrl: rp.avatarDataUrl ?? undefined });
+                        removeRecentAfterAdd(rp.name);
+                        setToast({ id: nanoid(), kind: "success", message: `เพิ่ม ${rp.name} แล้ว` });
+                      } catch (e: any) {
+                        try {
+                          await addPlayer(props.sessionId, { name: rp.name });
+                          removeRecentAfterAdd(rp.name);
+                          setToast({ id: nanoid(), kind: "success", message: `เพิ่ม ${rp.name} แล้ว` });
+                        } catch (e2: any) {
+                          try {
+                            const sameNameCount = players.filter((p) => p.name.replace(/\u200B/g, "") === rp.name).length;
+                            await addPlayer(props.sessionId, { name: `${rp.name}${"\u200B".repeat(Math.max(1, sameNameCount))}` });
+                            removeRecentAfterAdd(rp.name);
+                            setToast({ id: nanoid(), kind: "success", message: `เพิ่ม ${rp.name} แล้ว` });
+                          } catch (e3: any) {
+                            setToast({ id: nanoid(), kind: "error", message: e3?.message ?? e2?.message ?? e?.message ?? "เพิ่มผู้เล่นจาก Recent ไม่สำเร็จ" });
+                          }
+                        }
+                      }
+                    }}
+                  >
+                    + {rp.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="min-h-0 flex-1 overflow-y-auto pr-1">
             <div className="space-y-2">
               {players.map((p) => (
                 <div key={p.id} className="rounded-xl border border-slate-100 px-3 py-2">
@@ -281,11 +366,6 @@ export function Host(props: { sessionId: string; secret?: string }) {
 
                   await setTeamsAndQueue(props.sessionId, newTeams);
 
-                  // Immediately assign up to one match per court, never reusing a team
-                  for (const c of courts) {
-                    await assignNextForCourt(props.sessionId, c.id);
-                  }
-
                   setToast({ id: nanoid(), kind: "success", message: `Started. ${autoOddMode === "none" ? "Even players flow" : "3-player rotation flow"}.` });
                 } catch (e: any) {
                   setToast({ id: nanoid(), kind: "error", message: e?.message ?? "Failed to start" });
@@ -296,7 +376,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
             </Button>
 
             <div className="text-xs text-slate-500">
-              START shuffles once, creates teams (odd mode supported), locks editing, assigns at most 1 match per court.
+              START shuffles once, creates teams (odd mode supported), locks editing. Host ต้องกด Assign Next Match เอง.
             </div>
           </div>
         </CardBody>
@@ -304,7 +384,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
 
 
       <Card>
-        <CardHeader title="Courts" />
+        <CardHeader title="Courts" right={coverageCompleted ? <Chip tone="good">จับคู่ครบแล้ว</Chip> : undefined} />
         <CardBody className="space-y-3">
           {courts.map((c) => {
             const m = matchById(c.currentMatchId ?? undefined);
@@ -330,13 +410,8 @@ export function Host(props: { sessionId: string; secret?: string }) {
                     <div className="mt-2 grid grid-cols-2 gap-2">
 
                       <Button
-                        variant="danger"
-                        onClick={async () => {
-                          const { cancelMatchAndReschedule } = await import("../features/session/mutations");
-                          await cancelMatchAndReschedule(props.sessionId, m.id);
-                          await assignNextForCourt(props.sessionId, c.id);
-                          setToast({ id: nanoid(), kind: "info", message: "Canceled. Attempted reschedule." });
-                        }}
+                        variant="secondary"
+                        onClick={() => setConfirmCancelMatch({ matchId: m.id, courtId: c.id })}
                       >
                         Cancel
                       </Button>
@@ -357,19 +432,30 @@ export function Host(props: { sessionId: string; secret?: string }) {
                   <div className="mt-2">
                     <Button
                       variant="secondary"
-                      disabled={!session?.locked}
+                      disabled={!session?.locked || coverageCompleted}
                       onClick={async () => {
                         await assignNextForCourt(props.sessionId, c.id);
                       }}
                     >
                       Assign Next Match
                     </Button>
-                    <div className="text-xs text-slate-500 mt-1">Court idles only if no valid match exists.</div>
+                    <div className="text-xs text-slate-500 mt-1">{coverageCompleted ? "รอบนี้จับคู่ครบแล้ว" : "Court idles only if no valid match exists."}</div>
                   </div>
                 )}
               </div>
             );
           })}
+          {coverageCompleted && (
+            <div className="pt-1 text-center">
+              <button
+                type="button"
+                className="text-sm font-semibold text-sky-600 underline-offset-2 transition-colors hover:text-sky-700 hover:underline"
+                onClick={() => setConfirmResetPairing(true)}
+              >
+                แนะนำจับคู่ใหม่
+              </button>
+            </div>
+          )}
         </CardBody>
       </Card>
 
@@ -422,7 +508,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
       </Card>
 
 
-      <StatsTable players={players} editable onReset={async () => {
+      <StatsTable cardClassName={statsCardHeightClass} players={players} editable onReset={async () => {
         try {
           await resetTableStats(props.sessionId);
           setToast({ id: nanoid(), kind: "success", message: "รีเซ็ตตารางสถิติแล้ว" });
@@ -437,34 +523,16 @@ export function Host(props: { sessionId: string; secret?: string }) {
           <Button
             variant="secondary"
             disabled={!isLocked}
-            onClick={async () => {
-              try {
-                const { resetPairing } = await import("../features/session/mutations");
-                const r = await resetPairing(props.sessionId);
-                setToast({ id: nanoid(), kind: "success", message: r.warnings?.[0] ?? "รีเซ็ตทีมใหม่แล้ว" });
-                // assign initial matches again
-                for (const c of courts) await assignNextForCourt(props.sessionId, c.id);
-              } catch (e: any) {
-                setToast({ id: nanoid(), kind: "error", message: e?.message ?? "รีเซ็ตทีมไม่สำเร็จ" });
-              }
-            }}
+            onClick={() => setConfirmResetPairing(true)}
           >
-            Reset Pairing (ไม่รีเซ็ตสถิติผู้เล่น)
+            จับคู่ใหม่
           </Button>
 
           <Button
             variant="danger"
-            onClick={async () => {
-              try {
-                const { resetAll } = await import("../features/session/mutations");
-                await resetAll(props.sessionId, true);
-                setToast({ id: nanoid(), kind: "success", message: "รีเซ็ตทั้งหมดแล้ว (เก็บรายชื่อ)" });
-              } catch (e: any) {
-                setToast({ id: nanoid(), kind: "error", message: e?.message ?? "รีเซ็ตทั้งหมดไม่สำเร็จ" });
-              }
-            }}
+            onClick={() => setConfirmResetAll(true)}
           >
-            Reset All (เก็บรายชื่อ)
+            รีเซ็ต
           </Button>
         </CardBody>
       </Card>
@@ -491,37 +559,74 @@ export function Host(props: { sessionId: string; secret?: string }) {
           }
           }
         />
-      )}{confirmHome && (
-        <Modal
+      )}
+      {confirmHome && (
+        <ConfirmDrawer
           title="ยืนยันกลับหน้าแรก"
-          onClose={() => setConfirmHome(false)}
-          actions={
-            <div className="grid grid-cols-2 gap-2">
-              <Button variant="secondary" onClick={() => setConfirmHome(false)}>
-                ยกเลิก
-              </Button>
-              <Button
-                variant="danger"
-                onClick={async () => {
-                  try {
-                    const { resetAll } = await import("../features/session/mutations");
-                    await resetAll(props.sessionId, true);
-                    history.pushState({}, "", "/");
-                    window.dispatchEvent(new PopStateEvent("popstate"));
-                  } catch (e: any) {
-                    setToast({ id: nanoid(), kind: "error", message: e?.message ?? "รีเซ็ตไม่สำเร็จ" });
-                  }
-                }}
-              >
-                รีเซ็ต & กลับหน้าแรก
-              </Button>
-            </div>
-          }
-        >
-          <div className="text-sm text-slate-600">
-            การกลับหน้าแรกจะรีเซ็ตทั้งหมด (แต่เก็บรายชื่อผู้เล่น) แน่ใจหรือไม่?
-          </div>
-        </Modal>
+          description="ต้องการกลับหน้าแรกใช่ไหม? Session ปัจจุบันจะยังอยู่และกลับเข้ามาได้"
+          onCancel={() => setConfirmHome(false)}
+          onConfirm={() => {
+            history.pushState({}, "", "/");
+            window.dispatchEvent(new PopStateEvent("popstate"));
+          }}
+          confirmLabel="กลับหน้าแรก"
+        />
+      )}
+      {confirmResetPairing && (
+        <ConfirmDrawer
+          title="ยืนยัน Reset Pairing"
+          description="จะรีเซ็ตทีมใหม่โดยไม่รีเซ็ตสถิติผู้เล่น"
+          onCancel={() => setConfirmResetPairing(false)}
+          onConfirm={async () => {
+            try {
+              const { resetPairing } = await import("../features/session/mutations");
+              const r = await resetPairing(props.sessionId);
+              setToast({ id: nanoid(), kind: "success", message: r.warnings?.[0] ?? "รีเซ็ตทีมใหม่แล้ว" });
+            } catch (e: any) {
+              setToast({ id: nanoid(), kind: "error", message: e?.message ?? "รีเซ็ตทีมไม่สำเร็จ" });
+            } finally {
+              setConfirmResetPairing(false);
+            }
+          }}
+        />
+      )}
+      {confirmResetAll && (
+        <ConfirmDrawer
+          title="ยืนยัน Reset All"
+          description="จะรีเซ็ตทั้งหมด แต่เก็บรายชื่อผู้เล่นไว้"
+          onCancel={() => setConfirmResetAll(false)}
+          onConfirm={async () => {
+            try {
+              const { resetAll } = await import("../features/session/mutations");
+              await resetAll(props.sessionId, true);
+              setToast({ id: nanoid(), kind: "success", message: "รีเซ็ตทั้งหมดแล้ว (เก็บรายชื่อ)" });
+            } catch (e: any) {
+              setToast({ id: nanoid(), kind: "error", message: e?.message ?? "รีเซ็ตทั้งหมดไม่สำเร็จ" });
+            } finally {
+              setConfirmResetAll(false);
+            }
+          }}
+        />
+      )}
+      {confirmCancelMatch && (
+        <ConfirmDrawer
+          title="ยืนยันยกเลิกแมตช์"
+          description="ต้องการยกเลิกแมตช์นี้จริงไหม?"
+          onCancel={() => setConfirmCancelMatch(null)}
+          onConfirm={async () => {
+            try {
+              const { cancelMatchAndReschedule } = await import("../features/session/mutations");
+              await cancelMatchAndReschedule(props.sessionId, confirmCancelMatch.matchId);
+              await assignNextForCourt(props.sessionId, confirmCancelMatch.courtId);
+              setToast({ id: nanoid(), kind: "info", message: "ยกเลิกแมตช์แล้ว" });
+            } catch (e: any) {
+              setToast({ id: nanoid(), kind: "error", message: e?.message ?? "ยกเลิกแมตช์ไม่สำเร็จ" });
+            } finally {
+              setConfirmCancelMatch(null);
+            }
+          }}
+          confirmLabel="ยืนยันยกเลิก"
+        />
       )}
     </div>
 
@@ -761,22 +866,22 @@ function PlayerCountChip(props: { count: number }) {
   );
 }
 
-function StatsTable(props: { players: Player[]; editable?: boolean; onReset?: () => void | Promise<void> }) {
+function StatsTable(props: { players: Player[]; editable?: boolean; onReset?: () => void | Promise<void>; cardClassName?: string }) {
   const [sortBy, setSortBy] = useState<"wins" | "losses" | "played">("wins");
   const rows = [...props.players].sort((a, b) => b.stats[sortBy] - a.stats[sortBy]);
   return (
-    <Card>
+    <Card className={props.cardClassName ?? ""}>
       <CardHeader
         title="Stats Table"
         right={props.editable ? <button className="text-xs font-semibold text-rose-700" onClick={() => props.onReset?.()}>Reset table</button> : undefined}
       />
-      <CardBody className="space-y-2">
+      <CardBody className="flex h-full flex-col gap-2">
         <div className="flex gap-2">
           <button className={`rounded-full border px-2 py-1 text-xs ${sortBy === "wins" ? "bg-slate-900 text-white" : ""}`} onClick={() => setSortBy("wins")}>Wins</button>
           <button className={`rounded-full border px-2 py-1 text-xs ${sortBy === "losses" ? "bg-slate-900 text-white" : ""}`} onClick={() => setSortBy("losses")}>Losses</button>
           <button className={`rounded-full border px-2 py-1 text-xs ${sortBy === "played" ? "bg-slate-900 text-white" : ""}`} onClick={() => setSortBy("played")}>Played</button>
         </div>
-        <div className="rounded-xl border border-slate-200 overflow-hidden">
+        <div className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-slate-200">
           <table className="w-full text-xs">
             <thead className="bg-slate-100"><tr><th className="p-2 text-left">Player</th><th className="p-2">W</th><th className="p-2">L</th><th className="p-2">P</th></tr></thead>
             <tbody>{rows.map((p) => <tr key={p.id} className="border-t"><td className="p-2">{p.name}</td><td className="p-2 text-center">{p.stats.wins}</td><td className="p-2 text-center">{p.stats.losses}</td><td className="p-2 text-center">{p.stats.played}</td></tr>)}</tbody>

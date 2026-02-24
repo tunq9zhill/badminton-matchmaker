@@ -372,7 +372,7 @@ export async function resetPairing(sessionId: string) {
 
 
   // Rebuild teams avoiding teammate repeats (best-effort)
-  const { teams: newTeams, warnings } = rebuildTeamsAvoidingTeammates(players, s.teammateHistory);
+  const { teams: newTeams, warnings } = rebuildTeamsAvoidingTeammates(players, s.teammateHistory, s.config.oddMode);
 
   // Keep stats: map player/team stats is tricky because new teams are new ids.
   // Spec says keep player + team stats; team stats can't map 1:1 if teams change.

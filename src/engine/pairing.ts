@@ -71,7 +71,11 @@ export function teammateHistoryFromTeams(teams: Team[]) {
   return hist;
 }
 
-export function rebuildTeamsAvoidingTeammates(players: Player[], priorTeammateHistory: Record<string, true>) {
+export function rebuildTeamsAvoidingTeammates(
+  players: Player[],
+  priorTeammateHistory: Record<string, true>,
+  oddMode: Session["config"]["oddMode"] = "none"
+) {
   // Greedy best-effort: pair players minimizing violations.
   const warnings: string[] = [];
   const pool = shuffle(players);
@@ -80,7 +84,9 @@ export function rebuildTeamsAvoidingTeammates(players: Player[], priorTeammateHi
 
   const scorePair = (a: string, b: string) => (priorTeammateHistory[playerPairKey(a, b)] ? 1 : 0);
 
+  const shouldKeepOddTeam = oddMode === "three_player_rotation" && players.length % 2 === 1;
   while (pool.length >= 2) {
+    if (shouldKeepOddTeam && pool.length === 3) break;
     const p1 = pool.shift()!;
     if (used.has(p1.id)) continue;
 
@@ -111,6 +117,17 @@ export function rebuildTeamsAvoidingTeammates(players: Player[], priorTeammateHi
       playerIds: [p1.id, p2.id],
       stats: { played: 0, wins: 0, losses: 0 },
       isActive: false,
+    });
+  }
+
+  if (shouldKeepOddTeam && pool.length === 3) {
+    teams.push({
+      id: nanoid(8),
+      playerIds: [pool[0].id, pool[1].id, pool[2].id],
+      stats: { played: 0, wins: 0, losses: 0 },
+      isActive: false,
+      pairPreference: [pool[0].id, pool[1].id],
+      pendingOddChoice: true,
     });
   }
 
