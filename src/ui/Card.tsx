@@ -19,5 +19,5 @@ export function CardHeader(props: { title: string; right?: ReactNode }) {
 }
 
 export function CardBody(props: { children: ReactNode; className?: string }) {
-  return <div className={`px-4 py-3 overflow-y-auto overscroll-contain ${props.className ?? ""}`}>{props.children}</div>;
+  return <div className={`px-4 py-3 overflow-hidden ${props.className ?? ""}`}>{props.children}</div>;
 }

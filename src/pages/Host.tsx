@@ -219,10 +219,15 @@ export function Host(props: { sessionId: string; secret?: string }) {
                     className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold transition-all duration-200 hover:bg-slate-50"
                     onClick={async () => {
                       try {
-                        await addPlayer(props.sessionId, { name: rp.name, avatarDataUrl: rp.avatarDataUrl });
+                        await addPlayer(props.sessionId, { name: rp.name, avatarDataUrl: rp.avatarDataUrl ?? undefined });
                         setToast({ id: nanoid(), kind: "success", message: `เพิ่ม ${rp.name} แล้ว` });
                       } catch (e: any) {
-                        setToast({ id: nanoid(), kind: "error", message: e?.message ?? "เพิ่มผู้เล่นจาก Recent ไม่สำเร็จ" });
+                        try {
+                          await addPlayer(props.sessionId, { name: rp.name });
+                          setToast({ id: nanoid(), kind: "success", message: `เพิ่ม ${rp.name} แล้ว` });
+                        } catch (e2: any) {
+                          setToast({ id: nanoid(), kind: "error", message: e2?.message ?? e?.message ?? "เพิ่มผู้เล่นจาก Recent ไม่สำเร็จ" });
+                        }
                       }
                     }}
                   >
