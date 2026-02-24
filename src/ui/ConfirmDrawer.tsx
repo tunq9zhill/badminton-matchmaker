@@ -8,9 +8,9 @@ export function ConfirmDrawer(props: {
   confirmLabel?: string;
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 p-0" onClick={props.onCancel}>
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 p-0 transition-opacity duration-200" onClick={props.onCancel}>
       <div
-        className="w-full max-w-md rounded-t-2xl border border-slate-200 bg-white p-4 shadow-xl"
+        className="w-full max-w-md rounded-t-2xl border border-slate-200 bg-white p-4 shadow-xl transition-transform duration-200"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="text-sm font-semibold">{props.title}</div>

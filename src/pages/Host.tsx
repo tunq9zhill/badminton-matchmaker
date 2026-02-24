@@ -18,12 +18,13 @@ import { setTeamsAndQueue, assignNextForCourt, finishMatch, startOnce, resetTabl
 import { Modal } from "../ui/Modal";
 import type { ResultRow } from "../features/session/schema";
 import { ConfirmDrawer } from "../ui/ConfirmDrawer";
-import { clearHostSession, readRecentPlayers, saveRecentPlayers, type RecentPlayer } from "../app/localCache";
+import { clearRecentPlayers, readRecentPlayers, saveRecentPlayers, type RecentPlayer } from "../app/localCache";
 
 export function Host(props: { sessionId: string; secret?: string }) {
   const [confirmHome, setConfirmHome] = useState(false);
   const [confirmResetPairing, setConfirmResetPairing] = useState(false);
   const [confirmResetAll, setConfirmResetAll] = useState(false);
+  const [confirmCancelMatch, setConfirmCancelMatch] = useState<{ matchId: string; courtId: string } | null>(null);
   const conn = useFirestoreConnectionPing();
   const setToast = useAppStore((s) => s.setToast);
 
@@ -92,6 +93,8 @@ export function Host(props: { sessionId: string; secret?: string }) {
     return playedAllOnce || everyPairMet;
   }, [teams, session]);
 
+  const playersCardMaxClass = players.length > 0 ? "max-h-[430px]" : "";
+
   return (
     <div className="mx-auto max-w-md p-4 space-y-3">
       <button
@@ -117,7 +120,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
         </div>
       </div>
 
-      <Card className="min-h-[220px]">
+      <Card className={players.length > 0 ? playersCardMaxClass : ""}>
         <CardHeader title="Share session" />
         <CardBody className="text-sm text-slate-600">
           <div className="flex items-center gap-2">
@@ -145,7 +148,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
         </Modal>
       )}
 
-      <Card className="min-h-[220px]">
+      <Card className={players.length > 0 ? playersCardMaxClass : ""}>
         <CardHeader title="Players" right={isLocked ? <Chip>Locked</Chip> : <Chip tone="warn">Editable</Chip>} />
         <CardBody className="space-y-3 overflow-visible">
           {!isLocked && (
@@ -194,15 +197,33 @@ export function Host(props: { sessionId: string; secret?: string }) {
 
           {!isLocked && recentPlayers.length > 0 && (
             <div className="space-y-2">
-              <div className="text-xs font-semibold text-slate-600">Recent Players</div>
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-semibold text-slate-600">Recent Players</div>
+                <button
+                  type="button"
+                  className="text-xs font-semibold text-rose-700 transition-colors hover:text-rose-600"
+                  onClick={() => {
+                    clearRecentPlayers();
+                    setRecentPlayers([]);
+                    setToast({ id: nanoid(), kind: "success", message: "ล้าง Recent Players แล้ว" });
+                  }}
+                >
+                  รีเซ็ต
+                </button>
+              </div>
               <div className="flex flex-wrap gap-2">
                 {recentPlayers.map((rp) => (
                   <button
                     key={rp.name}
                     type="button"
-                    className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold"
+                    className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold transition-all duration-200 hover:bg-slate-50"
                     onClick={async () => {
-                      await addPlayer(props.sessionId, { name: rp.name, avatarDataUrl: rp.avatarDataUrl });
+                      try {
+                        await addPlayer(props.sessionId, { name: rp.name, avatarDataUrl: rp.avatarDataUrl });
+                        setToast({ id: nanoid(), kind: "success", message: `เพิ่ม ${rp.name} แล้ว` });
+                      } catch (e: any) {
+                        setToast({ id: nanoid(), kind: "error", message: e?.message ?? "เพิ่มผู้เล่นจาก Recent ไม่สำเร็จ" });
+                      }
                     }}
                   >
                     + {rp.name}
@@ -341,7 +362,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
       </Card>
 
 
-      <Card className="min-h-[220px]">
+      <Card className={teams.length > 0 ? playersCardMaxClass : ""}>
         <CardHeader title="Courts" right={coverageCompleted ? <Chip tone="good">จับคู่ครบแล้ว</Chip> : undefined} />
         <CardBody className="space-y-3">
           {courts.map((c) => {
@@ -368,13 +389,8 @@ export function Host(props: { sessionId: string; secret?: string }) {
                     <div className="mt-2 grid grid-cols-2 gap-2">
 
                       <Button
-                        variant="danger"
-                        onClick={async () => {
-                          const { cancelMatchAndReschedule } = await import("../features/session/mutations");
-                          await cancelMatchAndReschedule(props.sessionId, m.id);
-                          await assignNextForCourt(props.sessionId, c.id);
-                          setToast({ id: nanoid(), kind: "info", message: "Canceled. Attempted reschedule." });
-                        }}
+                        variant="secondary"
+                        onClick={() => setConfirmCancelMatch({ matchId: m.id, courtId: c.id })}
                       >
                         Cancel
                       </Button>
@@ -408,10 +424,21 @@ export function Host(props: { sessionId: string; secret?: string }) {
               </div>
             );
           })}
+          {coverageCompleted && (
+            <div className="pt-1 text-center">
+              <button
+                type="button"
+                className="text-sm font-semibold text-slate-700 underline-offset-2 transition-colors hover:text-slate-900 hover:underline"
+                onClick={() => setConfirmResetPairing(true)}
+              >
+                แนะนำจับคู่ใหม่
+              </button>
+            </div>
+          )}
         </CardBody>
       </Card>
 
-      <Card className="min-h-[220px]">
+      <Card className={(session?.queueTeams?.length ?? 0) > 0 ? playersCardMaxClass : ""}>
         <CardHeader title="Queue (available teams)" />
         <CardBody>
           <div className="text-sm text-slate-600 space-y-2">
@@ -433,7 +460,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
         </CardBody>
       </Card>
 
-      <Card className="min-h-[220px]">
+      <Card className={results.length > 0 ? playersCardMaxClass : ""}>
         <CardHeader title="Recent Results" />
         <CardBody className="space-y-2 ">
           {results.map((r) => {
@@ -460,7 +487,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
       </Card>
 
 
-      <StatsTable players={players} editable onReset={async () => {
+      <StatsTable cardClassName={players.length > 0 ? playersCardMaxClass : ""} players={players} editable onReset={async () => {
         try {
           await resetTableStats(props.sessionId);
           setToast({ id: nanoid(), kind: "success", message: "รีเซ็ตตารางสถิติแล้ว" });
@@ -469,7 +496,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
         }
       }} />
 
-      <Card className="min-h-[220px]">
+      <Card className={players.length > 0 ? playersCardMaxClass : ""}>
         <CardHeader title="รีเซ็ต" />
         <CardBody className="space-y-2">
           <Button
@@ -477,14 +504,14 @@ export function Host(props: { sessionId: string; secret?: string }) {
             disabled={!isLocked}
             onClick={() => setConfirmResetPairing(true)}
           >
-            Reset Pairing (ไม่รีเซ็ตสถิติผู้เล่น)
+            จับคู่ใหม่
           </Button>
 
           <Button
             variant="danger"
             onClick={() => setConfirmResetAll(true)}
           >
-            Reset All (เก็บรายชื่อ)
+            รีเซ็ต
           </Button>
         </CardBody>
       </Card>
@@ -515,20 +542,13 @@ export function Host(props: { sessionId: string; secret?: string }) {
       {confirmHome && (
         <ConfirmDrawer
           title="ยืนยันกลับหน้าแรก"
-          description="การกลับหน้าแรกจะรีเซ็ตทั้งหมด (แต่เก็บรายชื่อผู้เล่น) แน่ใจหรือไม่?"
+          description="ต้องการกลับหน้าแรกใช่ไหม? Session ปัจจุบันจะยังอยู่และกลับเข้ามาได้"
           onCancel={() => setConfirmHome(false)}
-          onConfirm={async () => {
-            try {
-              const { resetAll } = await import("../features/session/mutations");
-              await resetAll(props.sessionId, true);
-              clearHostSession();
-              history.pushState({}, "", "/");
-              window.dispatchEvent(new PopStateEvent("popstate"));
-            } catch (e: any) {
-              setToast({ id: nanoid(), kind: "error", message: e?.message ?? "รีเซ็ตไม่สำเร็จ" });
-            }
+          onConfirm={() => {
+            history.pushState({}, "", "/");
+            window.dispatchEvent(new PopStateEvent("popstate"));
           }}
-          confirmLabel="รีเซ็ต & กลับหน้าแรก"
+          confirmLabel="กลับหน้าแรก"
         />
       )}
       {confirmResetPairing && (
@@ -565,6 +585,26 @@ export function Host(props: { sessionId: string; secret?: string }) {
               setConfirmResetAll(false);
             }
           }}
+        />
+      )}
+      {confirmCancelMatch && (
+        <ConfirmDrawer
+          title="ยืนยันยกเลิกแมตช์"
+          description="ต้องการยกเลิกแมตช์นี้จริงไหม?"
+          onCancel={() => setConfirmCancelMatch(null)}
+          onConfirm={async () => {
+            try {
+              const { cancelMatchAndReschedule } = await import("../features/session/mutations");
+              await cancelMatchAndReschedule(props.sessionId, confirmCancelMatch.matchId);
+              await assignNextForCourt(props.sessionId, confirmCancelMatch.courtId);
+              setToast({ id: nanoid(), kind: "info", message: "ยกเลิกแมตช์แล้ว" });
+            } catch (e: any) {
+              setToast({ id: nanoid(), kind: "error", message: e?.message ?? "ยกเลิกแมตช์ไม่สำเร็จ" });
+            } finally {
+              setConfirmCancelMatch(null);
+            }
+          }}
+          confirmLabel="ยืนยันยกเลิก"
         />
       )}
     </div>
@@ -805,11 +845,11 @@ function PlayerCountChip(props: { count: number }) {
   );
 }
 
-function StatsTable(props: { players: Player[]; editable?: boolean; onReset?: () => void | Promise<void> }) {
+function StatsTable(props: { players: Player[]; editable?: boolean; onReset?: () => void | Promise<void>; cardClassName?: string }) {
   const [sortBy, setSortBy] = useState<"wins" | "losses" | "played">("wins");
   const rows = [...props.players].sort((a, b) => b.stats[sortBy] - a.stats[sortBy]);
   return (
-    <Card>
+    <Card className={props.cardClassName ?? ""}>
       <CardHeader
         title="Stats Table"
         right={props.editable ? <button className="text-xs font-semibold text-rose-700" onClick={() => props.onReset?.()}>Reset table</button> : undefined}

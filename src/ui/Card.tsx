@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 
 export function Card(props: { children: ReactNode; className?: string }) {
   return (
-    <div className={`rounded-2xl bg-white shadow-sm border border-slate-200 overflow-hidden flex flex-col ${props.className ?? ""}`}>
+    <div className={`rounded-2xl bg-white shadow-sm border border-slate-200 overflow-hidden flex flex-col transition-all duration-300 ${props.className ?? ""}`}>
       {props.children}
     </div>
   );

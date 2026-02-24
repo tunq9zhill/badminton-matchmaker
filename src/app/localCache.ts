@@ -53,3 +53,7 @@ export function readRecentPlayers(): RecentPlayer[] {
 export function saveRecentPlayers(players: RecentPlayer[]) {
   localStorage.setItem(RECENT_PLAYERS_KEY, JSON.stringify(players.slice(0, 12)));
 }
+
+export function clearRecentPlayers() {
+  localStorage.removeItem(RECENT_PLAYERS_KEY);
+}
