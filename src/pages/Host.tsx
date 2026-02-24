@@ -93,8 +93,14 @@ export function Host(props: { sessionId: string; secret?: string }) {
     return playedAllOnce || everyPairMet;
   }, [teams, session]);
 
-  const playersCardHeightClass = "h-[520px]";
-  const statsCardHeightClass = "h-[520px]";
+  const playersCardHeightClass = players.length > 0 ? "h-[520px]" : "";
+  const statsCardHeightClass = players.length > 0 ? "h-[520px]" : "";
+
+  const removeRecentAfterAdd = (name: string) => {
+    const next = recentPlayers.filter((p) => p.name !== name);
+    setRecentPlayers(next);
+    saveRecentPlayers(next);
+  };
 
   return (
     <div className="mx-auto max-w-md p-4 space-y-3">
@@ -221,15 +227,18 @@ export function Host(props: { sessionId: string; secret?: string }) {
                     onClick={async () => {
                       try {
                         await addPlayer(props.sessionId, { name: rp.name, avatarDataUrl: rp.avatarDataUrl ?? undefined });
+                        removeRecentAfterAdd(rp.name);
                         setToast({ id: nanoid(), kind: "success", message: `เพิ่ม ${rp.name} แล้ว` });
                       } catch (e: any) {
                         try {
                           await addPlayer(props.sessionId, { name: rp.name });
+                          removeRecentAfterAdd(rp.name);
                           setToast({ id: nanoid(), kind: "success", message: `เพิ่ม ${rp.name} แล้ว` });
                         } catch (e2: any) {
                           try {
                             const sameNameCount = players.filter((p) => p.name.replace(/\u200B/g, "") === rp.name).length;
                             await addPlayer(props.sessionId, { name: `${rp.name}${"\u200B".repeat(Math.max(1, sameNameCount))}` });
+                            removeRecentAfterAdd(rp.name);
                             setToast({ id: nanoid(), kind: "success", message: `เพิ่ม ${rp.name} แล้ว` });
                           } catch (e3: any) {
                             setToast({ id: nanoid(), kind: "error", message: e3?.message ?? e2?.message ?? e?.message ?? "เพิ่มผู้เล่นจาก Recent ไม่สำเร็จ" });
