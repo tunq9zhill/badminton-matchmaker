@@ -119,8 +119,8 @@ export async function addPlayer(sessionId: string, payload: { name: string; avat
     id,
     name: payload.name.trim(),
     stats: { played: 0, wins: 0, losses: 0 },
-    avatarDataUrl: payload.avatarDataUrl,
   };
+  if (payload.avatarDataUrl) p.avatarDataUrl = payload.avatarDataUrl;
   await setDoc(doc(db, COL.sessions, sessionId, COL.players, id), p);
   return id;
 }
