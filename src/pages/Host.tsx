@@ -86,8 +86,9 @@ export function Host(props: { sessionId: string; secret?: string }) {
   }, [players]);
 
   const coverageCompleted = useMemo(() => {
-    if (!teams.length || !players.length) return false;
-    const hasStartedCoverageRound = teams.some((t) => t.stats.played > 0);
+    const activeTeams = teams.filter((t) => !t.archived);
+    if (!activeTeams.length || !players.length) return false;
+    const hasStartedCoverageRound = activeTeams.some((t) => t.stats.played > 0);
     if (!hasStartedCoverageRound) return false;
     const playedAllOnce = players.every((p) => p.stats.played > 0);
     return playedAllOnce;
