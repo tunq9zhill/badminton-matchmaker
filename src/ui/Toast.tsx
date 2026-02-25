@@ -17,7 +17,7 @@ export function Toast(props: { toast: { id: string; message: string; kind: "info
       : "bg-slate-900";
 
   return (
-    <div className="fixed bottom-4 left-0 right-0 z-50 px-4">
+    <div className="fixed top-4 left-0 right-0 z-50 px-4">
       <div className={`mx-auto max-w-md rounded-xl px-4 py-3 text-white shadow-lg ${tone}`}>
         {props.toast.message}
       </div>
