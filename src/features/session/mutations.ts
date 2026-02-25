@@ -81,7 +81,11 @@ export async function assignNextForCourt(sessionId: string, courtId: string) {
   // ✅ ใช้เฉพาะทีมที่ไม่ archived และไม่ active
   const teams = teamsAll.filter((t) => !t.archived); // (จะกรอง isActive เพิ่มก็ได้ แต่ engine น่าจะเช็คอยู่แล้ว)
 
-  const proposed = proposeNextMatch(session, teams);
+  const playersSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.players));
+  const players = playersSnap.docs.map((d) => d.data() as Player);
+  const playersById = new Map(players.map((p) => [p.id, p]));
+
+  const proposed = proposeNextMatch(session, teams, playersById);
 
   // 2) Commit with transaction (atomic): re-check invariants and write
   await runTransaction(db, async (tx) => {

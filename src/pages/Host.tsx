@@ -76,9 +76,8 @@ export function Host(props: { sessionId: string; secret?: string }) {
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=${encodeURIComponent(viewerUrl)}`;
 
   useEffect(() => {
-    const merged: RecentPlayer[] = [...players]
-      .map((p) => ({ name: p.name, avatarDataUrl: p.avatarDataUrl, usedAt: Date.now() } as RecentPlayer))
-      .concat(recentPlayers)
+    const merged: RecentPlayer[] = [...recentPlayers]
+      .concat(players.map((p) => ({ name: p.name, avatarDataUrl: p.avatarDataUrl, usedAt: Date.now() } as RecentPlayer)))
       .filter((p) => p.name.trim());
     const dedup = Array.from(new Map(merged.map((p) => [p.name.toLowerCase(), p])).values()).slice(0, 12);
     setRecentPlayers(dedup);
@@ -87,14 +86,16 @@ export function Host(props: { sessionId: string; secret?: string }) {
   }, [players]);
 
   const coverageCompleted = useMemo(() => {
-    if (!teams.length) return false;
-    const playedAllOnce = teams.every((t) => t.stats.played > 0);
-    const everyPairMet = teams.every((a, i) => teams.slice(i + 1).every((b) => !!session?.metHistory?.[[a.id, b.id].sort().join("__")]));
-    return playedAllOnce || everyPairMet;
-  }, [teams, session]);
+    const activeTeams = teams.filter((t) => !t.archived);
+    if (!activeTeams.length || !players.length) return false;
+    const hasStartedCoverageRound = activeTeams.some((t) => t.stats.played > 0);
+    if (!hasStartedCoverageRound) return false;
+    const playedAllOnce = players.every((p) => p.stats.played > 0);
+    return playedAllOnce;
+  }, [teams, players]);
 
   const playersCardHeightClass = players.length > 0 ? "h-[520px]" : "";
-  const statsCardHeightClass = players.length > 0 ? "h-[520px]" : "";
+  const statsCardHeightClass = "";
 
   const removeRecentAfterAdd = (name: string) => {
     const next = recentPlayers.filter((p) => p.name !== name);
@@ -296,6 +297,12 @@ export function Host(props: { sessionId: string; secret?: string }) {
                               setUploadingPlayerId(p.id);
                               const avatarDataUrl = await compressImageToDataUrl(f, 320, 0.78);
                               await updatePlayerAvatar(props.sessionId, p.id, avatarDataUrl);
+                              const recentNext = [
+                                ...recentPlayers.filter((x) => x.name !== p.name),
+                                { name: p.name, avatarDataUrl, usedAt: Date.now() },
+                              ].slice(0, 12);
+                              setRecentPlayers(recentNext);
+                              saveRecentPlayers(recentNext);
                               setToast({ id: nanoid(), kind: "success", message: `อัปโหลดรูปของ ${p.name} แล้ว` });
                             } catch (err: any) {
                               setToast({ id: nanoid(), kind: "error", message: err?.message ?? "อัปโหลดรูปไม่สำเร็จ" });
@@ -314,6 +321,9 @@ export function Host(props: { sessionId: string; secret?: string }) {
                             try {
                               setUploadingPlayerId(p.id);
                               await updatePlayerAvatar(props.sessionId, p.id, undefined);
+                              const recentNext = recentPlayers.map((x) => (x.name === p.name ? { ...x, avatarDataUrl: undefined } : x));
+                              setRecentPlayers(recentNext);
+                              saveRecentPlayers(recentNext);
                               setToast({ id: nanoid(), kind: "success", message: `ลบรูปของ ${p.name} แล้ว` });
                             } catch (e: any) {
                               setToast({ id: nanoid(), kind: "error", message: e?.message ?? "ลบรูปไม่สำเร็จ" });
@@ -481,9 +491,9 @@ export function Host(props: { sessionId: string; secret?: string }) {
         </CardBody>
       </Card>
 
-      <Card>
+      <Card className="max-h-[460px]">
         <CardHeader title="Recent Results" />
-        <CardBody className="space-y-2 ">
+        <CardBody className="space-y-2 max-h-[410px] overflow-y-auto">
           {results.map((r) => {
             const ta = teamById(r.teamAId);
             const tb = teamById(r.teamBId);
@@ -777,13 +787,13 @@ function FinishModal(props: {
         {needsA && (
           <div className="space-y-2">
             <div className="font-semibold">Team A (3-player): select the 2 who played</div>
-            <PickTwo ids={props.teamA.playerIds} picked={aPlayed} setPicked={setAPlayed} playerById={props.playerById} />
+            <PickTwo ids={props.teamA.playerIds} picked={aPlayed} setPicked={setAPlayed} playerById={props.playerById} showPlayedCount />
           </div>
         )}
         {needsB && (
           <div className="space-y-2">
             <div className="font-semibold">Team B (3-player): select the 2 who played</div>
-            <PickTwo ids={props.teamB.playerIds} picked={bPlayed} setPicked={setBPlayed} playerById={props.playerById} />
+            <PickTwo ids={props.teamB.playerIds} picked={bPlayed} setPicked={setBPlayed} playerById={props.playerById} showPlayedCount />
           </div>
         )}
       </div>
@@ -820,6 +830,7 @@ function PickTwo(props: {
   picked: string[];
   setPicked: (v: string[]) => void;
   playerById: (id: string) => Player | undefined;
+  showPlayedCount?: boolean;
 }) {
   return (
     <div className="flex flex-wrap gap-2">
@@ -843,7 +854,10 @@ function PickTwo(props: {
               ) : (
                 <span className="h-5 w-5 rounded-full border border-dashed border-slate-300 bg-slate-50" />
               )}
-              <span>{props.playerById(id)?.name ?? "?"}</span>
+              <span>
+                {props.playerById(id)?.name ?? "?"}
+                {props.showPlayedCount ? ` (${props.playerById(id)?.stats.played ?? 0})` : ""}
+              </span>
             </span>
           </button>
         );
@@ -881,7 +895,7 @@ function StatsTable(props: { players: Player[]; editable?: boolean; onReset?: ()
           <button className={`rounded-full border px-2 py-1 text-xs ${sortBy === "losses" ? "bg-slate-900 text-white" : ""}`} onClick={() => setSortBy("losses")}>Losses</button>
           <button className={`rounded-full border px-2 py-1 text-xs ${sortBy === "played" ? "bg-slate-900 text-white" : ""}`} onClick={() => setSortBy("played")}>Played</button>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-slate-200">
+        <div className="max-h-[360px] overflow-y-auto rounded-xl border border-slate-200">
           <table className="w-full text-xs">
             <thead className="bg-slate-100"><tr><th className="p-2 text-left">Player</th><th className="p-2">W</th><th className="p-2">L</th><th className="p-2">P</th></tr></thead>
             <tbody>{rows.map((p) => <tr key={p.id} className="border-t"><td className="p-2">{p.name}</td><td className="p-2 text-center">{p.stats.wins}</td><td className="p-2 text-center">{p.stats.losses}</td><td className="p-2 text-center">{p.stats.played}</td></tr>)}</tbody>

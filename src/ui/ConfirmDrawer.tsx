@@ -19,17 +19,17 @@ export function ConfirmDrawer(props: {
     if (closing) return;
     setClosing(true);
     setOpen(false);
-    await new Promise((r) => setTimeout(r, 220));
+    await new Promise((r) => setTimeout(r, 450));
     await cb();
   };
 
   return (
     <div
-      className={`fixed inset-0 z-50 flex items-end justify-center p-0 transition-colors duration-200 ${open ? "bg-black/30" : "bg-black/0"}`}
+      className={`fixed inset-0 z-50 flex items-end justify-center p-0 transition-colors duration-[450ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${open ? "bg-black/35" : "bg-black/0"}`}
       onClick={() => void closeWith(props.onCancel)}
     >
       <div
-        className={`w-full max-w-md rounded-t-2xl border border-slate-200 bg-white p-4 shadow-xl transition-all duration-200 ease-out ${open ? "translate-y-0 opacity-100" : "translate-y-8 opacity-90"}`}
+        className={`w-full max-w-md squircle rounded-t-3xl rounded-b-none border border-slate-200 bg-white p-4 shadow-xl transition-all duration-[450ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${open ? "translate-y-0 opacity-100" : "translate-y-[110%] opacity-90"}`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="text-sm font-semibold">{props.title}</div>

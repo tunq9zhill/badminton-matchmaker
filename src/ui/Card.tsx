@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 
 export function Card(props: { children: ReactNode; className?: string }) {
   return (
-    <div className={`soft-fade-up rounded-2xl bg-white shadow-sm border border-slate-200 overflow-hidden flex flex-col transition-all duration-300 ${props.className ?? ""}`}>
+    <div className={`soft-fade-up squircle rounded-2xl bg-white shadow-sm border border-slate-200 overflow-hidden flex flex-col transition-all duration-300 ease-[cubic-bezier(0.38,1.37,0.33,1)] ${props.className ?? ""}`}>
       {props.children}
     </div>
   );
