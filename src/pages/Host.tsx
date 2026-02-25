@@ -887,7 +887,7 @@ function StatsTable(props: { players: Player[]; editable?: boolean; onReset?: ()
         title="Stats Table"
         right={props.editable ? <button className="text-xs font-semibold text-rose-700" onClick={() => props.onReset?.()}>Reset table</button> : undefined}
       />
-      <CardBody className="space-y-2">
+      <CardBody className="flex h-full flex-col gap-2">
         <div className="flex gap-2">
           <button className={`rounded-full border px-2 py-1 text-xs ${sortBy === "wins" ? "bg-slate-900 text-white" : ""}`} onClick={() => setSortBy("wins")}>Wins</button>
           <button className={`rounded-full border px-2 py-1 text-xs ${sortBy === "losses" ? "bg-slate-900 text-white" : ""}`} onClick={() => setSortBy("losses")}>Losses</button>
