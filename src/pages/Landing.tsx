@@ -6,6 +6,7 @@ import { createSession, sessionExists } from "../features/session/api";
 import { useAppStore } from "../app/store";
 import { nanoid } from "nanoid";
 import { Modal } from "../ui/Modal";
+import { readHostSession, saveHostSession } from "../app/localCache";
 
 type LandingMode = "home" | "create" | "viewer";
 
@@ -66,6 +67,7 @@ export function Landing() {
   const [scanOpen, setScanOpen] = useState(false);
   const [scanError, setScanError] = useState("");
   const [cameraReady, setCameraReady] = useState(false);
+  const [lastHostSession, setLastHostSession] = useState(() => readHostSession());
   const setToast = useAppStore((s) => s.setToast);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const otpRefs = useRef<Array<HTMLInputElement | null>>([]);
@@ -327,6 +329,8 @@ export function Landing() {
                     courtCount: Number(courtCount),
                     oddMode: "three_player_rotation",
                   });
+                  saveHostSession(sessionId, secret);
+                  setLastHostSession(readHostSession());
                   history.pushState({}, "", `/h/${sessionId}?secret=${encodeURIComponent(secret)}`);
                   window.dispatchEvent(new PopStateEvent("popstate"));
                 } catch (e: any) {
@@ -460,6 +464,17 @@ export function Landing() {
 
       <Card>
         <CardBody className="space-y-3">
+          {lastHostSession && (
+            <Button
+              variant="secondary"
+              onClick={() => {
+                history.pushState({}, "", `/h/${lastHostSession.sessionId}?secret=${encodeURIComponent(lastHostSession.secret)}`);
+                window.dispatchEvent(new PopStateEvent("popstate"));
+              }}
+            >
+              กลับเข้า Host ล่าสุด ({lastHostSession.sessionId})
+            </Button>
+          )}
           <Button onClick={() => setMode("create")}>Create Court</Button>
           <Button variant="secondary" onClick={() => setMode("viewer")}>Viewer</Button>
         </CardBody>
