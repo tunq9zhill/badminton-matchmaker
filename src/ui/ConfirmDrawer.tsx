@@ -29,7 +29,7 @@ export function ConfirmDrawer(props: {
       onClick={() => void closeWith(props.onCancel)}
     >
       <div
-        className={`w-full max-w-md squircle rounded-t-3xl border border-slate-200 bg-white p-4 shadow-xl transition-all duration-[450ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${open ? "translate-y-0 opacity-100" : "translate-y-[110%] opacity-90"}`}
+        className={`w-full max-w-md squircle rounded-t-3xl rounded-b-none border border-slate-200 bg-white p-4 shadow-xl transition-all duration-[450ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${open ? "translate-y-0 opacity-100" : "translate-y-[110%] opacity-90"}`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="text-sm font-semibold">{props.title}</div>
