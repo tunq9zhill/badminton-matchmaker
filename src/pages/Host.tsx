@@ -149,7 +149,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
         <Modal title="Session QR" onClose={() => setShowQr(false)}>
           <div className="space-y-2">
             <div className="flex justify-center">
-              <img src={qrUrl} alt={`QR-${props.sessionId}`} className="rounded-xl border border-slate-200" />
+              <img src={qrUrl} alt={`QR-${props.sessionId}`} className=" border border-slate-200" />
             </div>
             <div className="text-center text-xs text-slate-500 font-mono">{viewerUrl}</div>
           </div>
@@ -353,7 +353,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
                   )}
                 </div>
               ))}
-              {players.length === 0 && <div className="text-sm text-slate-500">No players yet.</div>}
+              {players.length === 0 && <div className="text-sm text-slate-500">ยังไม่มีผู้เล่น</div>}
             </div>
           </div>
 
@@ -386,7 +386,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
             </Button>
 
             <div className="text-xs text-slate-500">
-              START shuffles once, creates teams (odd mode supported), locks editing. Host ต้องกด Assign Next Match เอง.
+              START shuffles once, creates teams (odd mode supported), locks editing.
             </div>
           </div>
         </CardBody>

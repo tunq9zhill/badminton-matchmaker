@@ -81,7 +81,7 @@ export function Viewer(props: { sessionId: string }) {
               </div> */}
             </div>
           ))}
-          {players.length === 0 && <div className="text-sm text-slate-500">No players yet.</div>}
+          {players.length === 0 && <div className="text-sm text-slate-500">ยังไม่มีผู้เล่น</div>}
         </CardBody>
       </Card>
 

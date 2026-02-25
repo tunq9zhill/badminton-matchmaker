@@ -449,7 +449,7 @@ export function Landing() {
 
       <Card>
         <CardBody>
-          <div className="relative h-40 overflow-hidden rounded-2xl">
+          <div className="relative h-40 overflow-hidden rounded-xl">
             <div
               className="flex h-full transition-transform duration-700"
               style={{ transform: `translateX(-${slideIndex * 100}%)` }}

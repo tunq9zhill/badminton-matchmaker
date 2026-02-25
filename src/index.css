@@ -44,7 +44,7 @@ html, body, #root {
 .rounded-sm,
 .rounded-md,
 .rounded-lg {
-  border-radius: 16px;
+  border-radius: 8px;
 }
 
 .rounded-xl,
@@ -52,7 +52,7 @@ html, body, #root {
 .rounded-b-xl,
 .rounded-l-xl,
 .rounded-r-xl {
-  border-radius: 20px;
+  border-radius: 10px;
 }
 
 .rounded-2xl,
@@ -60,7 +60,7 @@ html, body, #root {
 .rounded-b-2xl,
 .rounded-l-2xl,
 .rounded-r-2xl {
-  border-radius: 24px;
+  border-radius: 12px;
 }
 
 .rounded-3xl,
@@ -68,5 +68,5 @@ html, body, #root {
 .rounded-b-3xl,
 .rounded-l-3xl,
 .rounded-r-3xl {
-  border-radius: 28px;
+  border-radius: 16px;
 }

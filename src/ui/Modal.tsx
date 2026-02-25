@@ -29,7 +29,7 @@ export function Modal(props: {
       onClick={() => void closeWith(props.onClose)}
     >
       <div
-        className={`w-full max-w-md squircle rounded-[20px] border border-slate-200 bg-white p-5 shadow-xl transition-all duration-[450ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${open ? "translate-y-0 opacity-100" : "translate-y-[110%] opacity-90"}`}
+        className={`w-full max-w-md squircle rounded-[28px] border border-slate-200 bg-white p-5 shadow-xl transition-all duration-[450ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${open ? "translate-y-0 opacity-100" : "translate-y-[110%] opacity-90"}`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-5 flex items-center justify-between border-b border-slate-100 pb-5">
