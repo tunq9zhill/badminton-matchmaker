@@ -491,9 +491,9 @@ export function Host(props: { sessionId: string; secret?: string }) {
         </CardBody>
       </Card>
 
-      <Card>
+      <Card className="max-h-[460px]">
         <CardHeader title="Recent Results" />
-        <CardBody className="space-y-2 ">
+        <CardBody className="space-y-2 max-h-[410px] overflow-y-auto">
           {results.map((r) => {
             const ta = teamById(r.teamAId);
             const tb = teamById(r.teamBId);
