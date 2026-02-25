@@ -40,53 +40,11 @@ html, body, #root {
   animation: soft-fade-up 280ms cubic-bezier(0.38, 1.37, 0.33, 1) both;
 }
 
-.squircle {
-  corner-shape: squircle;
-}
-
-.rounded,
-.rounded-sm,
-.rounded-md,
-.rounded-lg,
-.rounded-xl,
-.rounded-2xl,
-.rounded-3xl,
-.rounded-t,
-.rounded-t-sm,
-.rounded-t-md,
-.rounded-t-lg,
-.rounded-t-xl,
-.rounded-t-2xl,
-.rounded-t-3xl,
-.rounded-b,
-.rounded-b-sm,
-.rounded-b-md,
-.rounded-b-lg,
-.rounded-b-xl,
-.rounded-b-2xl,
-.rounded-b-3xl,
-.rounded-l,
-.rounded-l-sm,
-.rounded-l-md,
-.rounded-l-lg,
-.rounded-l-xl,
-.rounded-l-2xl,
-.rounded-l-3xl,
-.rounded-r,
-.rounded-r-sm,
-.rounded-r-md,
-.rounded-r-lg,
-.rounded-r-xl,
-.rounded-r-2xl,
-.rounded-r-3xl {
-  corner-shape: squircle;
-}
-
 .rounded,
 .rounded-sm,
 .rounded-md,
 .rounded-lg {
-  border-radius: 24px;
+  border-radius: 16px;
 }
 
 .rounded-xl,
@@ -94,7 +52,7 @@ html, body, #root {
 .rounded-b-xl,
 .rounded-l-xl,
 .rounded-r-xl {
-  border-radius: 26px;
+  border-radius: 20px;
 }
 
 .rounded-2xl,
@@ -102,7 +60,7 @@ html, body, #root {
 .rounded-b-2xl,
 .rounded-l-2xl,
 .rounded-r-2xl {
-  border-radius: 30px;
+  border-radius: 24px;
 }
 
 .rounded-3xl,
@@ -110,5 +68,5 @@ html, body, #root {
 .rounded-b-3xl,
 .rounded-l-3xl,
 .rounded-r-3xl {
-  border-radius: 34px;
+  border-radius: 28px;
 }
