@@ -81,7 +81,11 @@ export async function assignNextForCourt(sessionId: string, courtId: string) {
   // ✅ ใช้เฉพาะทีมที่ไม่ archived และไม่ active
   const teams = teamsAll.filter((t) => !t.archived); // (จะกรอง isActive เพิ่มก็ได้ แต่ engine น่าจะเช็คอยู่แล้ว)
 
-  const proposed = proposeNextMatch(session, teams);
+  const playersSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.players));
+  const players = playersSnap.docs.map((d) => d.data() as Player);
+  const playersById = new Map(players.map((p) => [p.id, p]));
+
+  const proposed = proposeNextMatch(session, teams, playersById);
 
   // 2) Commit with transaction (atomic): re-check invariants and write
   await runTransaction(db, async (tx) => {
@@ -372,7 +376,7 @@ export async function resetPairing(sessionId: string) {
 
 
   // Rebuild teams avoiding teammate repeats (best-effort)
-  const { teams: newTeams, warnings } = rebuildTeamsAvoidingTeammates(players, s.teammateHistory);
+  const { teams: newTeams, warnings } = rebuildTeamsAvoidingTeammates(players, s.teammateHistory, s.config.oddMode);
 
   // Keep stats: map player/team stats is tricky because new teams are new ids.
   // Spec says keep player + team stats; team stats can't map 1:1 if teams change.

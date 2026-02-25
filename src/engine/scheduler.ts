@@ -1,9 +1,9 @@
-import type { Session, Team } from "../app/types";
+import type { Player, Session, Team } from "../app/types";
 import { computeActiveSet, hasMet, matchWouldViolateActive, safeOpponentOptions, partitionByRecord } from "./constraints";
 
 export type ProposedMatch = { teamAId: string; teamBId: string; isFallback?: boolean };
 
-function pickCoverage(session: Session, teams: Team[]): ProposedMatch | null {
+function pickCoverage(session: Session, teams: Team[], playersById?: Map<string, Player>): ProposedMatch | null {
   const activeSet = computeActiveSet(session, teams);
 
   const eligible = teams.filter((t) => !t.isActive && !activeSet.has(t.id));
@@ -11,6 +11,10 @@ function pickCoverage(session: Session, teams: Team[]): ProposedMatch | null {
 
   // Prefer played == 0, then fewer opponent options (harder to schedule), then lowest played count.
   const ranked = [...eligible].sort((a, b) => {
+    const aNeedsFirstMatch = a.playerIds.some((pid) => (playersById?.get(pid)?.stats.played ?? 0) === 0) ? 0 : 1;
+    const bNeedsFirstMatch = b.playerIds.some((pid) => (playersById?.get(pid)?.stats.played ?? 0) === 0) ? 0 : 1;
+    if (aNeedsFirstMatch !== bNeedsFirstMatch) return aNeedsFirstMatch - bNeedsFirstMatch;
+
     const ap0 = a.stats.played === 0 ? 0 : 1;
     const bp0 = b.stats.played === 0 ? 0 : 1;
     if (ap0 !== bp0) return ap0 - bp0;
@@ -75,7 +79,7 @@ function pickBracket(session: Session, teams: Team[]): ProposedMatch | null {
   return null;
 }
 
-export function proposeNextMatch(session: Session, teams: Team[]): ProposedMatch | null {
-  if (session.phase === "coverage") return pickCoverage(session, teams);
+export function proposeNextMatch(session: Session, teams: Team[], playersById?: Map<string, Player>): ProposedMatch | null {
+  if (session.phase === "coverage") return pickCoverage(session, teams, playersById);
   return pickBracket(session, teams);
 }
