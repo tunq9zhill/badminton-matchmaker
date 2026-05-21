@@ -25,16 +25,40 @@ function pickCoverage(session: Session, teams: Team[], playersById?: Map<string,
   });
 
   const teamHasUnplayedMembers = (team: Team) => team.playerIds.some((pid) => (playersById?.get(pid)?.stats.played ?? 0) === 0);
+  const teamLastPlayedAt = (team: Team) =>
+    Math.max(
+      ...team.playerIds.map((pid) => {
+        const h = playersById?.get(pid)?.playHistory ?? [];
+        return h.length ? h[h.length - 1] : 0;
+      })
+    );
+
+  const latestPlayedAtAmongEligible = Math.max(...ranked.map((t) => teamLastPlayedAt(t)), 0);
+  const wasJustPlayed = (team: Team) => teamLastPlayedAt(team) > 0 && teamLastPlayedAt(team) === latestPlayedAtAmongEligible;
+
+  const existsUnmetPair = ranked.some((a) =>
+    ranked.some((b) => a.id !== b.id && !matchWouldViolateActive(activeSet, a.id, b.id) && !hasMet(session, a.id, b.id))
+  );
 
   for (const a of ranked) {
     for (const b of ranked) {
       if (a.id === b.id) continue;
       if (matchWouldViolateActive(activeSet, a.id, b.id)) continue;
 
+      // Avoid sending teams that just played back onto court immediately,
+      // unless there is no other option.
+      if ((wasJustPlayed(a) || wasJustPlayed(b)) && ranked.some((t) => !wasJustPlayed(t))) {
+        continue;
+      }
+
       // If a 3-player team still has a member who hasn't played yet,
       // allow rematch in coverage so host can rotate that player in.
       const allowRematchForUnplayed = teamHasUnplayedMembers(a) || teamHasUnplayedMembers(b);
-      if (hasMet(session, a.id, b.id) && !allowRematchForUnplayed) continue;
+      if (hasMet(session, a.id, b.id)) {
+        // Prioritize unseen pairs first; only rematch when no unseen matchup remains.
+        if (existsUnmetPair) continue;
+        if (!allowRematchForUnplayed) continue;
+      }
 
       return { teamAId: a.id, teamBId: b.id };
     }
