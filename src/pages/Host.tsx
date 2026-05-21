@@ -442,14 +442,14 @@ export function Host(props: { sessionId: string; secret?: string }) {
                   <div className="mt-2">
                     <Button
                       variant="secondary"
-                      disabled={!session?.locked || coverageCompleted}
+                      disabled={!session?.locked}
                       onClick={async () => {
                         await assignNextForCourt(props.sessionId, c.id);
                       }}
                     >
                       Assign Next Match
                     </Button>
-                    <div className="text-xs text-slate-500 mt-1">{coverageCompleted ? "รอบนี้จับคู่ครบแล้ว" : "Court idles only if no valid match exists."}</div>
+                    <div className="text-xs text-slate-500 mt-1">{coverageCompleted ? "รอบนี้จับคู่ครบแล้ว แต่ยังลงสนามต่อจากคิวถัดไปได้" : "Court idles only if no valid match exists."}</div>
                   </div>
                 )}
               </div>
