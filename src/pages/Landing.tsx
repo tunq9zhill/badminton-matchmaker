@@ -62,6 +62,7 @@ export function Landing() {
   const [mode, setMode] = useState<LandingMode>("home");
   const [courtCount, setCourtCount] = useState("2");
   const [viewerCode, setViewerCode] = useState(Array(6).fill(""));
+  const [joinCode, setJoinCode] = useState("");
   const [slideIndex, setSlideIndex] = useState(0);
   const [joining, setJoining] = useState(false);
   const [scanOpen, setScanOpen] = useState(false);
@@ -441,15 +442,15 @@ export function Landing() {
   }
 
   return (
-    <div className="mx-auto max-w-md p-4 space-y-3">
-      <div className="pt-2">
-        <div className="text-xl font-bold">Badminton Matchmaker</div>
-        <div className="text-sm text-slate-600">Choose your mode to get started</div>
+    <div className="mx-auto min-h-screen max-w-md bg-slate-50 px-4 py-5">
+      <div className="pt-2 pb-3">
+        <div className="text-[2.1rem] leading-[2.3rem] font-extrabold text-slate-900">Badminton Matchmaker</div>
+        <div className="mt-2 text-sm text-slate-500">เหมือน. จองคอร์ดเก่ง. สนุกทุกแมทช์</div>
       </div>
 
-      <Card>
-        <CardBody>
-          <div className="relative h-40 overflow-hidden rounded-xl">
+      <Card className="overflow-hidden border-0 shadow-none bg-transparent">
+        <CardBody className="p-0">
+          <div className="relative h-[290px] overflow-hidden rounded-3xl">
             <div
               className="flex h-full transition-transform duration-700"
               style={{ transform: `translateX(-${slideIndex * 100}%)` }}
@@ -458,12 +459,35 @@ export function Landing() {
                 <img key={image} src={image} alt="badminton" className="h-full w-full flex-shrink-0 object-cover" />
               ))}
             </div>
+            <div className="absolute inset-0 bg-gradient-to-t from-[#081b49dd] via-[#0f2c6f66] to-transparent" />
+            <div className="absolute inset-x-4 bottom-4 rounded-2xl border border-white/30 bg-[#081b49e6] p-4 text-white shadow-xl backdrop-blur">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-lg font-bold leading-tight">สร้างเซสชัน</div>
+                  <div className="text-sm text-white/80">สร้างห้องแข่งใหม่</div>
+                </div>
+                <button
+                  className="h-10 w-10 rounded-full border border-white/30 text-xl"
+                  onClick={() => setMode("create")}
+                  aria-label="Create session"
+                >
+                  ›
+                </button>
+              </div>
+            </div>
           </div>
         </CardBody>
       </Card>
 
-      <Card>
-        <CardBody className="space-y-3">
+      <Card className="mt-3 rounded-3xl">
+        <CardBody className="space-y-3 p-4">
+          <div className="text-sm font-semibold text-slate-800">เข้าร่วมเซสชัน <span className="text-xs font-normal text-slate-400">(เป็นผู้ชม)</span></div>
+          <Input
+            value={joinCode}
+            onChange={(v) => setJoinCode(v.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6))}
+            placeholder="ใส่รหัสเซสชัน"
+          />
+          <Button onClick={() => void moveToViewer(joinCode)} disabled={joinCode.length !== 6 || joining}>เข้าร่วม</Button>
           {lastHostSession && (
             <Button
               variant="secondary"
@@ -475,8 +499,7 @@ export function Landing() {
               กลับเข้า Host ล่าสุด ({lastHostSession.sessionId})
             </Button>
           )}
-          <Button onClick={() => setMode("create")}>Create Court</Button>
-          <Button variant="secondary" onClick={() => setMode("viewer")}>Viewer</Button>
+          <Button variant="secondary" onClick={() => setMode("viewer")}>สแกน QR / กรอกรหัสแบบละเอียด</Button>
         </CardBody>
       </Card>
     </div>
