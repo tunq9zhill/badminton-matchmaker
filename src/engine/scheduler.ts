@@ -36,7 +36,15 @@ function pickCoverage(session: Session, teams: Team[], playersById?: Map<string,
   const latestPlayedAtAmongEligible = Math.max(...ranked.map((t) => teamLastPlayedAt(t)), 0);
   const wasJustPlayed = (team: Team) => teamLastPlayedAt(team) > 0 && teamLastPlayedAt(team) === latestPlayedAtAmongEligible;
 
-  const candidates: Array<{ a: Team; b: Team; seen: boolean; justPlayed: boolean; allowRematchForUnplayed: boolean }> = [];
+  const candidateRestPenalty = (a: Team, b: Team) => {
+    const aJust = wasJustPlayed(a);
+    const bJust = wasJustPlayed(b);
+    if (aJust && bJust) return 2;
+    if (aJust || bJust) return 1;
+    return 0;
+  };
+
+  const candidates: Array<{ a: Team; b: Team; seen: boolean; restPenalty: number; allowRematchForUnplayed: boolean }> = [];
   for (const a of ranked) {
     for (const b of ranked) {
       if (a.id === b.id) continue;
@@ -45,28 +53,25 @@ function pickCoverage(session: Session, teams: Team[], playersById?: Map<string,
         a,
         b,
         seen: hasMet(session, a.id, b.id),
-        justPlayed: wasJustPlayed(a) || wasJustPlayed(b),
+        restPenalty: candidateRestPenalty(a, b),
         allowRematchForUnplayed: teamHasUnplayedMembers(a) || teamHasUnplayedMembers(b),
       });
     }
   }
   if (!candidates.length) return null;
 
-  // Pass 1: unseen + avoid just-played teams when we still have alternatives.
-  const strictUnseen = candidates.find((c) => !c.seen && !c.justPlayed);
-  if (strictUnseen) return { teamAId: strictUnseen.a.id, teamBId: strictUnseen.b.id };
+  const rankedCandidates = [...candidates].sort((x, y) => {
+    if (x.seen !== y.seen) return x.seen ? 1 : -1;
+    if (x.restPenalty !== y.restPenalty) return x.restPenalty - y.restPenalty;
+    if (x.allowRematchForUnplayed !== y.allowRematchForUnplayed) return x.allowRematchForUnplayed ? -1 : 1;
 
-  // Pass 2: unseen pair is still preferred even if it includes teams that just played.
-  const unseen = candidates.find((c) => !c.seen);
-  if (unseen) return { teamAId: unseen.a.id, teamBId: unseen.b.id };
+    const xPlayed = x.a.stats.played + x.b.stats.played;
+    const yPlayed = y.a.stats.played + y.b.stats.played;
+    return xPlayed - yPlayed;
+  });
 
-  // Pass 3: rematch fallback (still prefer not-just-played, then 3-player rotation need).
-  const rematch = candidates.find((c) => !c.justPlayed && c.allowRematchForUnplayed)
-    ?? candidates.find((c) => !c.justPlayed)
-    ?? candidates.find((c) => c.allowRematchForUnplayed)
-    ?? candidates[0];
-
-  return { teamAId: rematch.a.id, teamBId: rematch.b.id, isFallback: true };
+  const best = rankedCandidates[0];
+  return { teamAId: best.a.id, teamBId: best.b.id, isFallback: best.seen };
 }
 
 function pickBracket(session: Session, teams: Team[]): ProposedMatch | null {
