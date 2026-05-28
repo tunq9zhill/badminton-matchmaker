@@ -67,28 +67,29 @@ export async function setTeamsAndQueue(sessionId: string, teams: Team[]) {
 
 export async function assignNextForCourt(sessionId: string, courtId: string) {
   const user = await ensureAnonAuth();
-
-  // 1) Read outside transaction (allowed): session + all teams
   const sRef = doc(db, COL.sessions, sessionId);
-  const sSnap = await getDoc(sRef);
-  if (!sSnap.exists()) throw new Error("Missing session");
-  const session = sSnap.data() as Session;
-  if (session.hostUid !== user.uid) throw new Error("Not host");
 
-  const teamsSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.teams));
-  const teamsAll = teamsSnap.docs.map((d) => d.data() as Team);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    // 1) Read outside transaction (allowed): session + all teams
+    const sSnap = await getDoc(sRef);
+    if (!sSnap.exists()) throw new Error("Missing session");
+    const session = sSnap.data() as Session;
+    if (session.hostUid !== user.uid) throw new Error("Not host");
 
-  // ✅ ใช้เฉพาะทีมที่ไม่ archived และไม่ active
-  const teams = teamsAll.filter((t) => !t.archived); // (จะกรอง isActive เพิ่มก็ได้ แต่ engine น่าจะเช็คอยู่แล้ว)
+    const teamsSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.teams));
+    const teamsAll = teamsSnap.docs.map((d) => d.data() as Team);
 
-  const playersSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.players));
-  const players = playersSnap.docs.map((d) => d.data() as Player);
-  const playersById = new Map(players.map((p) => [p.id, p]));
+    const teams = teamsAll.filter((t) => !t.archived);
 
-  const proposed = proposeNextMatch(session, teams, playersById);
+    const playersSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.players));
+    const players = playersSnap.docs.map((d) => d.data() as Player);
+    const playersById = new Map(players.map((p) => [p.id, p]));
 
-  // 2) Commit with transaction (atomic): re-check invariants and write
-  await runTransaction(db, async (tx) => {
+    const proposed = proposeNextMatch(session, teams, playersById);
+
+    try {
+      // 2) Commit with transaction (atomic): re-check invariants and write
+      await runTransaction(db, async (tx) => {
     const sSnap2 = await tx.get(sRef);
     const cRef = doc(db, COL.sessions, sessionId, COL.courts, courtId);
     const cSnap = await tx.get(cRef);
@@ -113,8 +114,8 @@ export async function assignNextForCourt(sessionId: string, courtId: string) {
     const b = bSnap.data() as Team;
 
     // Strict constraints: must be inactive and not in activeTeams
-    if (a.isActive || b.isActive) return;
-    if (s2.activeTeams.includes(a.id) || s2.activeTeams.includes(b.id)) return;
+    if (a.isActive || b.isActive) throw new Error("RETRY_ASSIGN");
+    if (s2.activeTeams.includes(a.id) || s2.activeTeams.includes(b.id)) throw new Error("RETRY_ASSIGN");
 
     const matchId = nanoid(10);
     const m: Match = {
@@ -139,7 +140,13 @@ export async function assignNextForCourt(sessionId: string, courtId: string) {
     });
 
     tx.update(cRef, { currentMatchId: matchId });
-  });
+      });
+      return;
+    } catch (err) {
+      if (err instanceof Error && err.message === "RETRY_ASSIGN" && attempt < 2) continue;
+      throw err;
+    }
+  }
 }
 
 
