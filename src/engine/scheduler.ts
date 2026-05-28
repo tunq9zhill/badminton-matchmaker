@@ -36,34 +36,37 @@ function pickCoverage(session: Session, teams: Team[], playersById?: Map<string,
   const latestPlayedAtAmongEligible = Math.max(...ranked.map((t) => teamLastPlayedAt(t)), 0);
   const wasJustPlayed = (team: Team) => teamLastPlayedAt(team) > 0 && teamLastPlayedAt(team) === latestPlayedAtAmongEligible;
 
-  const existsUnmetPair = ranked.some((a) =>
-    ranked.some((b) => a.id !== b.id && !matchWouldViolateActive(activeSet, a.id, b.id) && !hasMet(session, a.id, b.id))
-  );
-
+  const candidates: Array<{ a: Team; b: Team; seen: boolean; justPlayed: boolean; allowRematchForUnplayed: boolean }> = [];
   for (const a of ranked) {
     for (const b of ranked) {
       if (a.id === b.id) continue;
       if (matchWouldViolateActive(activeSet, a.id, b.id)) continue;
-
-      // Avoid sending teams that just played back onto court immediately,
-      // unless there is no other option.
-      if ((wasJustPlayed(a) || wasJustPlayed(b)) && ranked.some((t) => !wasJustPlayed(t))) {
-        continue;
-      }
-
-      // If a 3-player team still has a member who hasn't played yet,
-      // allow rematch in coverage so host can rotate that player in.
-      const allowRematchForUnplayed = teamHasUnplayedMembers(a) || teamHasUnplayedMembers(b);
-      if (hasMet(session, a.id, b.id)) {
-        // Prioritize unseen pairs first; only rematch when no unseen matchup remains.
-        if (existsUnmetPair) continue;
-        if (!allowRematchForUnplayed) continue;
-      }
-
-      return { teamAId: a.id, teamBId: b.id };
+      candidates.push({
+        a,
+        b,
+        seen: hasMet(session, a.id, b.id),
+        justPlayed: wasJustPlayed(a) || wasJustPlayed(b),
+        allowRematchForUnplayed: teamHasUnplayedMembers(a) || teamHasUnplayedMembers(b),
+      });
     }
   }
-  return null;
+  if (!candidates.length) return null;
+
+  // Pass 1: unseen + avoid just-played teams when we still have alternatives.
+  const strictUnseen = candidates.find((c) => !c.seen && !c.justPlayed);
+  if (strictUnseen) return { teamAId: strictUnseen.a.id, teamBId: strictUnseen.b.id };
+
+  // Pass 2: unseen pair is still preferred even if it includes teams that just played.
+  const unseen = candidates.find((c) => !c.seen);
+  if (unseen) return { teamAId: unseen.a.id, teamBId: unseen.b.id };
+
+  // Pass 3: rematch fallback (still prefer not-just-played, then 3-player rotation need).
+  const rematch = candidates.find((c) => !c.justPlayed && c.allowRematchForUnplayed)
+    ?? candidates.find((c) => !c.justPlayed)
+    ?? candidates.find((c) => c.allowRematchForUnplayed)
+    ?? candidates[0];
+
+  return { teamAId: rematch.a.id, teamBId: rematch.b.id, isFallback: true };
 }
 
 function pickBracket(session: Session, teams: Team[]): ProposedMatch | null {
@@ -104,6 +107,14 @@ function pickBracket(session: Session, teams: Team[]): ProposedMatch | null {
   for (const a of winners) {
     for (const b of losers) {
       if (hasMet(session, a.id, b.id)) continue;
+      return { teamAId: a.id, teamBId: b.id, isFallback: true };
+    }
+  }
+  // Ultimate fallback: allow rematch so host can always continue assigning matches.
+  for (const a of eligible) {
+    for (const b of eligible) {
+      if (a.id === b.id) continue;
+      if (matchWouldViolateActive(activeSet, a.id, b.id)) continue;
       return { teamAId: a.id, teamBId: b.id, isFallback: true };
     }
   }
