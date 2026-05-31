@@ -19,6 +19,7 @@ import { Modal } from "../ui/Modal";
 import type { ResultRow } from "../features/session/schema";
 import { ConfirmDrawer } from "../ui/ConfirmDrawer";
 import { clearRecentPlayers, readRecentPlayers, saveRecentPlayers, type RecentPlayer } from "../app/localCache";
+import { AvatarBadge } from "../ui/AvatarBadge";
 
 export function Host(props: { sessionId: string; secret?: string }) {
   const [confirmHome, setConfirmHome] = useState(false);
@@ -70,7 +71,6 @@ export function Host(props: { sessionId: string; secret?: string }) {
 
   const isLocked = !!session?.locked;
   const isMobile = typeof window !== "undefined" && window.matchMedia("(hover: none) and (pointer: coarse)").matches;
-
   const canStart = session && players.length >= 4 && teams.length === 0;
   const viewerUrl = typeof window !== "undefined" ? `${window.location.origin}/s/${props.sessionId}` : `/s/${props.sessionId}`;
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=${encodeURIComponent(viewerUrl)}`;
@@ -94,7 +94,6 @@ export function Host(props: { sessionId: string; secret?: string }) {
     return playedAllOnce;
   }, [teams, players]);
 
-  const playersCardHeightClass = players.length > 0 ? "h-[520px]" : "";
   const statsCardHeightClass = "";
 
   const removeRecentAfterAdd = (name: string) => {
@@ -156,10 +155,10 @@ export function Host(props: { sessionId: string; secret?: string }) {
         </Modal>
       )}
 
-      <Card className={playersCardHeightClass}>
-        <CardHeader title="Players" right={isLocked ? <Chip>Locked</Chip> : <Chip tone="warn">Editable</Chip>} />
+      <Card className="max-h-[520px]">
+        <CardHeader title={`Players (${players.length})`} right={isLocked ? <Chip>Locked</Chip> : <Chip tone="warn">Ready</Chip>} />
         <CardBody className="flex h-full flex-col gap-3 overflow-hidden">
-          {!isLocked && (
+          {false && !isLocked && (
             <form
               className="flex gap-2"
               onSubmit={async (e) => {
@@ -203,7 +202,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
             </form>
           )}
 
-          {!isLocked && recentPlayers.length > 0 && (
+          {false && !isLocked && recentPlayers.length > 0 && (
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <div className="text-xs font-semibold text-slate-600">Recent Players</div>
@@ -260,7 +259,14 @@ export function Host(props: { sessionId: string; secret?: string }) {
               {players.map((p) => (
                 <div key={p.id} className="rounded-xl border border-slate-100 px-3 py-2">
                   <div className="flex items-center gap-3">
-                    {p.avatarDataUrl ? (
+                    <AvatarBadge
+                      name={p.name}
+                      imageUrl={p.avatarDataUrl}
+                      sizeClassName="h-12 w-12"
+                      textClassName="text-lg"
+                      className="border border-slate-200"
+                    />
+                    {false ? (
                       <button
                         type="button"
                         onClick={() => window.open(p.avatarDataUrl, "_blank")}
@@ -279,7 +285,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
                     </div>
                   </div>
 
-                  {!isLocked && (
+                  {false && !isLocked && (
                     <div className="mt-2 flex flex-wrap items-center gap-3 text-xs font-semibold">
                       <label className="cursor-pointer text-slate-700">
                         {isMobile ? "เลือกรูป" : "อัปโหลดรูป"}
@@ -357,9 +363,9 @@ export function Host(props: { sessionId: string; secret?: string }) {
             </div>
           </div>
 
-          <Divider />
+          {!isLocked && teams.length === 0 && <Divider />}
 
-          <div className="space-y-2">
+          {!isLocked && teams.length === 0 && <div className="space-y-2">
             <Button
               disabled={!canStart}
               onClick={async () => {
@@ -388,7 +394,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
             <div className="text-xs text-slate-500">
               START shuffles once, creates teams (odd mode supported), locks editing.
             </div>
-          </div>
+          </div>}
         </CardBody>
       </Card>
 
@@ -682,11 +688,13 @@ function TeamLine(props: { team: Team | undefined; playerById: (id: string) => P
         const p = props.playerById(id);
         return (
           <div key={id} className="inline-flex items-center gap-1">
-            {p?.avatarDataUrl ? (
-              <img src={p.avatarDataUrl} alt={`avatar-${p.name}`} className="h-6 w-6 rounded-full object-cover border border-slate-200" />
-            ) : (
-              <div className="h-6 w-6 rounded-full border border-dashed border-slate-300 bg-slate-50" />
-            )}
+            <AvatarBadge
+              name={p?.name ?? "?"}
+              imageUrl={p?.avatarDataUrl}
+              sizeClassName="h-6 w-6"
+              textClassName="text-[10px]"
+              className="border border-slate-200"
+            />
             <span>{p?.name ?? "?"}</span>
             {idx < props.team!.playerIds.length - 1 && <span className="text-slate-400"></span>}
           </div>

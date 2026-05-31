@@ -112,6 +112,25 @@ export async function upsertPlayers(sessionId: string, names: string[]) {
   await b.commit();
 }
 
+export async function addPlayers(sessionId: string, players: Array<{ name: string; avatarDataUrl?: string }>) {
+  await assertHost(sessionId);
+  const b = writeBatch(db);
+  const created: Player[] = [];
+  for (const player of players) {
+    const id = nanoid(8);
+    const next: Player = {
+      id,
+      name: player.name.trim(),
+      stats: { played: 0, wins: 0, losses: 0 },
+    };
+    if (player.avatarDataUrl) next.avatarDataUrl = player.avatarDataUrl;
+    created.push(next);
+    b.set(doc(db, COL.sessions, sessionId, COL.players, id), next);
+  }
+  await b.commit();
+  return created;
+}
+
 export async function addPlayer(sessionId: string, payload: { name: string; avatarDataUrl?: string }) {
   await assertHost(sessionId);
   const id = nanoid(8);

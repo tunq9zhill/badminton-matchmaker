@@ -1,17 +1,17 @@
 {
-  "name": "BadMatch",
-  "short_name": "BadMatch",
+  "name": "CourtMate",
+  "short_name": "CourtMate",
   "description": "จัดการแข่งขันแบดมินตันและสร้างคู่แบบเรียลไทม์",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#f8fafc",
-  "theme_color": "#f8fafc",
+  "background_color": "#000000",
+  "theme_color": "#37B64B",
   "icons": [
     {
-      "src": "/BadMatch.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
+      "src": "/courtmate-logo.png",
+      "sizes": "768x768",
+      "type": "image/png",
       "purpose": "any maskable"
     }
   ]
