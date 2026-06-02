@@ -4,7 +4,7 @@ import { ensureAnonAuth } from "../app/firebase";
 import { useAppStore } from "../app/store";
 import type { Court, Match, Player, Session, Team } from "../app/types";
 import courtMateLogo from "../assets/CourtMate-logo.png";
-import courtsBackground from "../assets/Courts.svg";
+import courtsBackground from "../assets/CourtsPNG.png";
 import {
   assertHost,
   subscribeCourts,
