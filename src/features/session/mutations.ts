@@ -2,6 +2,7 @@ import { nanoid } from "nanoid";
 import {
   doc, collection, runTransaction, writeBatch, updateDoc
 } from "firebase/firestore";
+import type { DocumentReference } from "firebase/firestore";
 import { db, ensureAnonAuth } from "../../app/firebase";
 import type { Match, Player, Session, Team } from "../../app/types";
 import { COL, type ResultRow } from "./schema";
@@ -21,6 +22,28 @@ function removeFrom(arr: string[], ids: string[]) {
 
 function addTo(arr: string[], ids: string[]) {
   return uniq([...arr, ...ids]);
+}
+
+type AssignNextOptions = {
+  expectedTeamAId?: string;
+  expectedTeamBId?: string;
+  teamAPlayedPlayerIds?: string[];
+  teamBPlayedPlayerIds?: string[];
+};
+
+function playedIdsForAssign(team: Team, selected: string[] | undefined, label: string) {
+  if (team.playerIds.length < 3) return team.playerIds;
+
+  const ids = uniq(selected ?? []);
+  if (ids.length !== 2) throw new Error(`Choose 2 players for ${label}`);
+  if (ids.some((id) => !team.playerIds.includes(id))) throw new Error(`Invalid players for ${label}`);
+  return ids;
+}
+
+function defaultPlayedIds(team: Team) {
+  if (team.playerIds.length <= 2) return team.playerIds;
+  const start = (team.rotationIndex ?? 0) % team.playerIds.length;
+  return [team.playerIds[start], team.playerIds[(start + 1) % team.playerIds.length]];
 }
 
 export async function startOnce(sessionId: string) {
@@ -65,7 +88,7 @@ export async function setTeamsAndQueue(sessionId: string, teams: Team[]) {
   });
 }
 
-export async function assignNextForCourt(sessionId: string, courtId: string) {
+export async function assignNextForCourt(sessionId: string, courtId: string, options: AssignNextOptions = {}) {
   const user = await ensureAnonAuth();
 
   // 1) Read outside transaction (allowed): session + all teams
@@ -81,11 +104,15 @@ export async function assignNextForCourt(sessionId: string, courtId: string) {
   // ✅ ใช้เฉพาะทีมที่ไม่ archived และไม่ active
   const teams = teamsAll.filter((t) => !t.archived); // (จะกรอง isActive เพิ่มก็ได้ แต่ engine น่าจะเช็คอยู่แล้ว)
 
-  const playersSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.players));
-  const players = playersSnap.docs.map((d) => d.data() as Player);
-  const playersById = new Map(players.map((p) => [p.id, p]));
-
-  const proposed = proposeNextMatch(session, teams, playersById);
+  const proposed =
+    options.expectedTeamAId && options.expectedTeamBId
+      ? { teamAId: options.expectedTeamAId, teamBId: options.expectedTeamBId, isFallback: false }
+      : await (async () => {
+          const playersSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.players));
+          const players = playersSnap.docs.map((d) => d.data() as Player);
+          const playersById = new Map(players.map((p) => [p.id, p]));
+          return proposeNextMatch(session, teams, playersById);
+        })();
 
   // 2) Commit with transaction (atomic): re-check invariants and write
   await runTransaction(db, async (tx) => {
@@ -102,6 +129,14 @@ export async function assignNextForCourt(sessionId: string, courtId: string) {
       return;
     }
 
+    if (options.expectedTeamAId && options.expectedTeamBId && (s2.queueTeams[0] !== proposed.teamAId || s2.queueTeams[1] !== proposed.teamBId)) {
+      throw new Error("Next match changed. Try assigning again.");
+    }
+
+    if (!s2.queueTeams.includes(proposed.teamAId) || !s2.queueTeams.includes(proposed.teamBId)) {
+      throw new Error("Selected match is no longer in queue.");
+    }
+
     // Re-read only the two teams involved (doc refs only)
     const aRef = doc(db, COL.sessions, sessionId, COL.teams, proposed.teamAId);
     const bRef = doc(db, COL.sessions, sessionId, COL.teams, proposed.teamBId);
@@ -116,6 +151,9 @@ export async function assignNextForCourt(sessionId: string, courtId: string) {
     if (a.isActive || b.isActive) return;
     if (s2.activeTeams.includes(a.id) || s2.activeTeams.includes(b.id)) return;
 
+    const teamAPlayed = playedIdsForAssign(a, options.teamAPlayedPlayerIds, "Team A");
+    const teamBPlayed = playedIdsForAssign(b, options.teamBPlayedPlayerIds, "Team B");
+
     const matchId = nanoid(10);
     const m: Match = {
       id: matchId,
@@ -126,6 +164,8 @@ export async function assignNextForCourt(sessionId: string, courtId: string) {
       startedAt: Date.now(),
       isFallback: proposed.isFallback ?? false,
       createdAt: Date.now(),
+      teamAPlayedPlayerIds: teamAPlayed,
+      teamBPlayedPlayerIds: teamBPlayed,
     };
 
     tx.set(doc(db, COL.sessions, sessionId, COL.matches, matchId), m);
@@ -200,8 +240,6 @@ export async function finishMatch(
   matchId: string,
   winnerTeamId: string,
   payload: {
-    teamAPlayedPlayerIds?: string[];
-    teamBPlayedPlayerIds?: string[];
     scoreA?: number;
     scoreB?: number;
   }
@@ -236,14 +274,14 @@ export async function finishMatch(
     const aWin = winnerTeamId === teamA.id;
     const bWin = winnerTeamId === teamB.id;
 
-    // determine who actually played (for 3-player team)
+    // The active pair is chosen before assigning a 3-player team to court.
     const teamAPlayed =
-    payload.teamAPlayedPlayerIds ??
-    (teamA.playerIds.length === 3 ? (teamA.pairPreference ?? teamA.playerIds.slice(0, 2)) : teamA.playerIds);
+      m.teamAPlayedPlayerIds ??
+      defaultPlayedIds(teamA);
 
     const teamBPlayed =
-    payload.teamBPlayedPlayerIds ??
-    (teamB.playerIds.length === 3 ? (teamB.pairPreference ?? teamB.playerIds.slice(0, 2)) : teamB.playerIds);
+      m.teamBPlayedPlayerIds ??
+      defaultPlayedIds(teamB);
 
     // pre-read all player docs that we will update
     const playerRefs = [...teamAPlayed, ...teamBPlayed].map((pid) =>
@@ -457,6 +495,38 @@ export async function resetAll(sessionId: string, keepNames: boolean) {
     startedAt: null,
     locked: false,
   } as any);
+
+  await b.commit();
+}
+
+export async function endSession(sessionId: string) {
+  const user = await ensureAnonAuth();
+
+  const sRef = doc(db, COL.sessions, sessionId);
+  const sSnap = await getDoc(sRef);
+  if (!sSnap.exists()) throw new Error("Missing session");
+  const s = sSnap.data() as Session;
+  if (s.hostUid !== user.uid) throw new Error("Not host");
+
+  const deleteRefs: DocumentReference[] = [];
+  for (const colName of [COL.matches, COL.results, COL.teams, COL.courts, COL.players] as const) {
+    const snap = await getDocs(collection(db, COL.sessions, sessionId, colName));
+    for (const d of snap.docs) deleteRefs.push(d.ref);
+  }
+
+  let b = writeBatch(db);
+  let opCount = 1;
+  b.delete(sRef);
+
+  for (const ref of deleteRefs) {
+    if (opCount >= 500) {
+      await b.commit();
+      b = writeBatch(db);
+      opCount = 0;
+    }
+    b.delete(ref);
+    opCount += 1;
+  }
 
   await b.commit();
 }
