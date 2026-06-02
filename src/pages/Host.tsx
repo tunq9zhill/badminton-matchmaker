@@ -1,32 +1,66 @@
-import { useEffect, useMemo, useState } from "react";
-import { ensureAnonAuth } from "../app/firebase";
-import { useFirestoreConnectionPing } from "../app/connection";
-import { Card, CardBody, CardHeader } from "../ui/Card";
-import { Chip } from "../ui/Chip";
-import { Button } from "../ui/Button";
-import { Input } from "../ui/Input";
-import { Divider } from "../ui/Divider";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { nanoid } from "nanoid";
+import { ensureAnonAuth } from "../app/firebase";
 import { useAppStore } from "../app/store";
+import type { Court, Match, Player, Session, Team } from "../app/types";
+import courtMateLogo from "../assets/CourtMate-logo.png";
+import courtsBackground from "../assets/Courts.svg";
 import {
-  subscribeSession, subscribePlayers, subscribeTeams, subscribeCourts, subscribeMatches, subscribeRecentResults,
-  upsertPlayers, assertHost, updatePlayerAvatar, updateSessionCore, addPlayer
+  assertHost,
+  subscribeCourts,
+  subscribeMatches,
+  subscribePlayers,
+  subscribeSession,
+  subscribeTeams,
+  updateSessionCore,
 } from "../features/session/api";
-import type { Match, Player, Session, Team, Court } from "../app/types";
 import { buildInitialTeams } from "../engine/pairing";
-import { setTeamsAndQueue, assignNextForCourt, finishMatch, startOnce, resetTableStats } from "../features/session/mutations";
-import { Modal } from "../ui/Modal";
-import type { ResultRow } from "../features/session/schema";
+import {
+  assignNextForCourt,
+  endSession,
+  finishMatch,
+  setTeamsAndQueue,
+  startOnce,
+} from "../features/session/mutations";
 import { ConfirmDrawer } from "../ui/ConfirmDrawer";
-import { clearRecentPlayers, readRecentPlayers, saveRecentPlayers, type RecentPlayer } from "../app/localCache";
+import { Modal } from "../ui/Modal";
 import { AvatarBadge } from "../ui/AvatarBadge";
+import { Button } from "../ui/Button";
+import { clearHostSession } from "../app/localCache";
+
+type QueuePreviewRow = {
+  id: string;
+  teamA?: Team;
+  teamB?: Team;
+};
+
+type PendingAssign = {
+  courtId: string;
+  teamA: Team;
+  teamB: Team;
+};
+
+const COURT_CARD_WIDTH = 283;
+const COURT_CARD_GAP = 12;
+const COURT_CARD_STEP = COURT_CARD_WIDTH + COURT_CARD_GAP;
 
 export function Host(props: { sessionId: string; secret?: string }) {
   const [confirmHome, setConfirmHome] = useState(false);
+  const [confirmEndSession, setConfirmEndSession] = useState(false);
   const [confirmResetPairing, setConfirmResetPairing] = useState(false);
   const [confirmResetAll, setConfirmResetAll] = useState(false);
   const [confirmCancelMatch, setConfirmCancelMatch] = useState<{ matchId: string; courtId: string } | null>(null);
-  const conn = useFirestoreConnectionPing();
+  const [showFinish, setShowFinish] = useState<{ match: Match } | null>(null);
+  const [pendingAssign, setPendingAssign] = useState<PendingAssign | null>(null);
+  const [winnerTeamId, setWinnerTeamId] = useState("");
+  const [showQr, setShowQr] = useState(false);
+  const [activeCourtIndex, setActiveCourtIndex] = useState(0);
+  const currentMatchScrollRef = useRef<HTMLDivElement | null>(null);
+  const currentMatchDragRef = useRef({ active: false, startX: 0, scrollLeft: 0 });
+  const currentMatchSnapTimerRef = useRef<number | null>(null);
+  const playerScrollRef = useRef<HTMLDivElement | null>(null);
+  const playerDragRef = useRef({ active: false, startX: 0, scrollLeft: 0 });
+
   const setToast = useAppStore((s) => s.setToast);
 
   const [session, setSession] = useState<Session | null>(null);
@@ -34,17 +68,9 @@ export function Host(props: { sessionId: string; secret?: string }) {
   const [teams, setTeams] = useState<Team[]>([]);
   const [courts, setCourts] = useState<Court[]>([]);
   const [matches, setMatches] = useState<Match[]>([]);
-  const [results, setResults] = useState<any[]>([]);
-
-  const [playerName, setPlayerName] = useState("");
-  const [showFinish, setShowFinish] = useState<{ match: Match } | null>(null);
-  const [winnerTeamId, setWinnerTeamId] = useState<string>("");
-  const [uploadingPlayerId, setUploadingPlayerId] = useState<string | null>(null);
-  const [showQr, setShowQr] = useState(false);
-  const [recentPlayers, setRecentPlayers] = useState<RecentPlayer[]>(() => readRecentPlayers());
 
   useEffect(() => {
-    ensureAnonAuth().catch(() => { });
+    ensureAnonAuth().catch(() => {});
   }, []);
 
   useEffect(() => subscribeSession(props.sessionId, setSession), [props.sessionId]);
@@ -52,684 +78,958 @@ export function Host(props: { sessionId: string; secret?: string }) {
   useEffect(() => subscribeTeams(props.sessionId, setTeams), [props.sessionId]);
   useEffect(() => subscribeCourts(props.sessionId, setCourts), [props.sessionId]);
   useEffect(() => subscribeMatches(props.sessionId, setMatches), [props.sessionId]);
-  useEffect(() => subscribeRecentResults(props.sessionId, setResults), [props.sessionId]);
 
   const matchById = useMemo(() => {
-    const m = new Map(matches.map((x) => [x.id, x]));
-    return (id?: string | null) => (id ? m.get(id) : undefined);
+    const map = new Map(matches.map((match) => [match.id, match]));
+    return (id?: string | null) => (id ? map.get(id) : undefined);
   }, [matches]);
 
   const teamById = useMemo(() => {
-    const m = new Map(teams.map((t) => [t.id, t]));
-    return (id: string) => m.get(id);
+    const map = new Map(teams.map((team) => [team.id, team]));
+    return (id?: string | null) => (id ? map.get(id) : undefined);
   }, [teams]);
 
   const playerById = useMemo(() => {
-    const m = new Map(players.map((p) => [p.id, p]));
-    return (id: string) => m.get(id);
+    const map = new Map(players.map((player) => [player.id, player]));
+    return (id: string) => map.get(id);
   }, [players]);
 
   const isLocked = !!session?.locked;
-  const isMobile = typeof window !== "undefined" && window.matchMedia("(hover: none) and (pointer: coarse)").matches;
-  const canStart = session && players.length >= 4 && teams.length === 0;
+  const canStart = !!session && players.length >= 4 && teams.length === 0;
   const viewerUrl = typeof window !== "undefined" ? `${window.location.origin}/s/${props.sessionId}` : `/s/${props.sessionId}`;
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=${encodeURIComponent(viewerUrl)}`;
 
-  useEffect(() => {
-    const merged: RecentPlayer[] = [...recentPlayers]
-      .concat(players.map((p) => ({ name: p.name, avatarDataUrl: p.avatarDataUrl, usedAt: Date.now() } as RecentPlayer)))
-      .filter((p) => p.name.trim());
-    const dedup = Array.from(new Map(merged.map((p) => [p.name.toLowerCase(), p])).values()).slice(0, 12);
-    setRecentPlayers(dedup);
-    saveRecentPlayers(dedup);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [players]);
-
   const coverageCompleted = useMemo(() => {
-    const activeTeams = teams.filter((t) => !t.archived);
+    const activeTeams = teams.filter((team) => !team.archived);
     if (!activeTeams.length || !players.length) return false;
-    const hasStartedCoverageRound = activeTeams.some((t) => t.stats.played > 0);
+    const hasStartedCoverageRound = activeTeams.some((team) => team.stats.played > 0);
     if (!hasStartedCoverageRound) return false;
-    const playedAllOnce = players.every((p) => p.stats.played > 0);
-    return playedAllOnce;
+    return players.every((player) => player.stats.played > 0);
   }, [teams, players]);
 
-  const statsCardHeightClass = "";
+  const topPlayers = useMemo(
+    () =>
+      [...players]
+        .sort((a, b) => {
+          if (b.stats.wins !== a.stats.wins) return b.stats.wins - a.stats.wins;
+          if (b.stats.played !== a.stats.played) return b.stats.played - a.stats.played;
+          return a.name.localeCompare(b.name);
+        })
+        .slice(0, 3),
+    [players],
+  );
 
-  const removeRecentAfterAdd = (name: string) => {
-    const next = recentPlayers.filter((p) => p.name !== name);
-    setRecentPlayers(next);
-    saveRecentPlayers(next);
+  const podiumPlayers = [topPlayers[1], topPlayers[0], topPlayers[2]];
+
+  const queuePreview = useMemo<QueuePreviewRow[]>(() => {
+    const queuedTeams = (session?.queueTeams ?? []).map((teamId) => teamById(teamId)).filter((team): team is Team => !!team);
+    const rows: QueuePreviewRow[] = [];
+
+    for (let index = 0; index < queuedTeams.length; index += 2) {
+      rows.push({
+        id: `${queuedTeams[index]?.id ?? "empty"}-${queuedTeams[index + 1]?.id ?? "waiting"}`,
+        teamA: queuedTeams[index],
+        teamB: queuedTeams[index + 1],
+      });
+    }
+
+    return rows;
+  }, [session?.queueTeams, teamById]);
+
+  const courtCountLabel = session?.config.courtCount ?? courts.length;
+
+  useEffect(() => {
+    setActiveCourtIndex((index) => Math.min(index, Math.max(courts.length - 1, 0)));
+  }, [courts.length]);
+
+  useEffect(() => {
+    return () => {
+      if (currentMatchSnapTimerRef.current != null) window.clearTimeout(currentMatchSnapTimerRef.current);
+    };
+  }, []);
+
+  const handleStart = async () => {
+    if (!session) return;
+
+    try {
+      await assertHost(props.sessionId);
+      await startOnce(props.sessionId);
+
+      const autoOddMode: Session["config"]["oddMode"] = players.length % 2 === 1 ? "three_player_rotation" : "none";
+      await updateSessionCore(props.sessionId, { config: { ...session.config, oddMode: autoOddMode } });
+
+      const preparedSession = { ...session, config: { ...session.config, oddMode: autoOddMode } };
+      const { teams: newTeams, warnings } = buildInitialTeams(preparedSession, players);
+      if (warnings.length) {
+        setToast({ id: nanoid(), kind: "info", message: warnings[0] });
+      }
+
+      await setTeamsAndQueue(props.sessionId, newTeams);
+      setToast({
+        id: nanoid(),
+        kind: "success",
+        message: autoOddMode === "none" ? "Session started." : "Session started with 3-player rotation.",
+      });
+    } catch (error: any) {
+      setToast({ id: nanoid(), kind: "error", message: error?.message ?? "Failed to start session" });
+    }
+  };
+
+  const getNextMatchTeams = () => {
+    const next = queuePreview[0];
+    if (!next?.teamA || !next.teamB) return null;
+    return { teamA: next.teamA, teamB: next.teamB };
+  };
+
+  const assignPreparedMatch = async (
+    courtId: string,
+    teamA: Team,
+    teamB: Team,
+    teamAPlayedPlayerIds?: string[],
+    teamBPlayedPlayerIds?: string[],
+  ) => {
+    await assignNextForCourt(props.sessionId, courtId, {
+      expectedTeamAId: teamA.id,
+      expectedTeamBId: teamB.id,
+      teamAPlayedPlayerIds,
+      teamBPlayedPlayerIds,
+    });
+  };
+
+  const handleAssignNext = async (courtId: string) => {
+    if (!session?.locked || coverageCompleted) return;
+
+    const next = getNextMatchTeams();
+    if (!next) {
+      setToast({ id: nanoid(), kind: "info", message: "No available match to assign." });
+      return;
+    }
+
+    if (next.teamA.playerIds.length === 3 || next.teamB.playerIds.length === 3) {
+      setPendingAssign({ courtId, teamA: next.teamA, teamB: next.teamB });
+      return;
+    }
+
+    try {
+      await assignPreparedMatch(courtId, next.teamA, next.teamB);
+      setToast({ id: nanoid(), kind: "success", message: "Match assigned." });
+    } catch (error: any) {
+      setToast({ id: nanoid(), kind: "error", message: error?.message ?? "Failed to assign next match" });
+    }
+  };
+
+  const snapCurrentMatchScroll = (element: HTMLDivElement) => {
+    const maxIndex = Math.max(courts.length - 1, 0);
+    const nextIndex = Math.min(maxIndex, Math.max(0, Math.round(element.scrollLeft / COURT_CARD_STEP)));
+    const targetLeft = nextIndex * COURT_CARD_STEP;
+    if (Math.abs(element.scrollLeft - targetLeft) < 1) {
+      setActiveCourtIndex(nextIndex);
+      return;
+    }
+    element.style.scrollBehavior = "smooth";
+    element.scrollTo({ left: targetLeft, behavior: "smooth" });
+    setActiveCourtIndex(nextIndex);
+  };
+
+  const scheduleCurrentMatchSnap = (element: HTMLDivElement) => {
+    if (currentMatchSnapTimerRef.current != null) window.clearTimeout(currentMatchSnapTimerRef.current);
+    currentMatchSnapTimerRef.current = window.setTimeout(() => snapCurrentMatchScroll(element), 220);
   };
 
   return (
-    <div className="mx-auto max-w-md p-4 space-y-3">
-      <button
-        className="text-xs font-semibold text-slate-700"
-        onClick={() => setConfirmHome(true)}
-      >
-        กลับหน้าแรก
-      </button>
-      <div className="flex items-center justify-between pt-2">
-        <div>
-          <div className="flex justify-start items-center gap-1">
-            <div className="text-xl font-bold">Host</div>
-            <div className="flex justify-end scale-75"><PlayerCountChip count={players.length} /></div>
+    <div className="min-h-[100dvh] bg-[#0D2318] text-white">
+      <div className="mx-auto flex min-h-[100dvh] w-full max-w-[430px] flex-col px-4 pb-[max(24px,env(safe-area-inset-bottom))] pt-[max(16px,env(safe-area-inset-top))]">
+        <header className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <img src={courtMateLogo} alt="CourtMate" className="h-10 w-10 rounded-[14px]" />
+            <div className="text-[18.8px] font-semibold leading-6 tracking-[-0.02em] text-white">CourtMate</div>
           </div>
-          <div className="text-xs text-slate-500">Session: <span className="font-mono">{props.sessionId}</span></div>
-        </div>
-        <div className="text-right space-y-1">
-          <Chip tone={conn === "ok" ? "good" : conn === "offline" ? "warn" : "muted"}>
-            {conn === "ok" ? "Connected" : conn === "offline" ? "Offline" : "Connecting"}
-          </Chip>
 
-          <div className="text-[11px] text-slate-500">Phase: {session?.phase ?? "-"}</div>
-        </div>
-      </div>
-
-      <Card>
-        <CardHeader title="Share session" />
-        <CardBody className="text-sm text-slate-600">
           <div className="flex items-center gap-2">
-            <span>Session code: <span className="font-mono text-base font-bold tracking-[0.35em]">{props.sessionId}</span></span>
-            <button
-              type="button"
-              className="rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-700"
-              onClick={() => setShowQr(true)}
-            >
-              QR
-            </button>
+            <HeaderActionButton onClick={() => setShowQr(true)}>QR</HeaderActionButton>
+            <HeaderActionButton onClick={() => setConfirmHome(true)}>Exit</HeaderActionButton>
           </div>
-          <div className="text-xs text-slate-500 mt-1">Viewer ใส่โค้ด 6 ตัวนี้เพื่อเข้าดูได้ทันที</div>
-        </CardBody>
-      </Card>
+        </header>
 
-      {showQr && (
-        <Modal title="Session QR" onClose={() => setShowQr(false)}>
-          <div className="space-y-2">
-            <div className="flex justify-center">
-              <img src={qrUrl} alt={`QR-${props.sessionId}`} className=" border border-slate-200" />
+        <section className="mt-6">
+          <div className="max-w-[320px]">
+            <h1 className="text-[48px] font-bold leading-[60px] tracking-[-0.03em] text-white">Match center</h1>
+            <p className="mt-1 text-[16px] font-normal leading-5 text-white">Manage matches, player and queue.</p>
+          </div>
+
+          {/* <div className="mt-4 flex flex-wrap items-center gap-2 text-[13px] text-white/65">
+            <StatusPill>{conn === "ok" ? "Connected" : conn === "offline" ? "Offline" : "Connecting"}</StatusPill>
+            <StatusPill>{isLocked ? "Live session" : "Setup"}</StatusPill>
+            <StatusPill>Session {props.sessionId}</StatusPill>
+          </div> */}
+        </section>
+
+        {!teams.length && (
+          <SectionCard
+            className="mt-6"
+            title="Session setup"
+            right={<span className="text-[14px] text-white/50">{players.length} players</span>}
+          >
+            <p className="text-[14px] leading-5 text-white/70">
+              Build the first rotation and lock this session before managing live matches.
+            </p>
+            <div className="mt-4 flex gap-3">
+              <ActionButton disabled={!canStart} onClick={handleStart} tone="primary" className="flex-1">
+                Start session
+              </ActionButton>
             </div>
-            <div className="text-center text-xs text-slate-500 font-mono">{viewerUrl}</div>
+          </SectionCard>
+        )}
+
+        <TopThreePodium players={podiumPlayers} />
+
+        <section className="relative mt-6 h-[355px] overflow-hidden rounded-[20px] border border-white/5 bg-white/[0.05]">
+          <h2 className="absolute left-[19px] top-5 text-[16px] font-medium leading-5 text-white">Current match</h2>
+          <div className="absolute right-5 top-5 text-right">
+            <div className="text-[16px] font-medium leading-5 text-white">{courtCountLabel} Courts</div>
           </div>
-        </Modal>
-      )}
 
-      <Card className="max-h-[520px]">
-        <CardHeader title={`Players (${players.length})`} right={isLocked ? <Chip>Locked</Chip> : <Chip tone="warn">Ready</Chip>} />
-        <CardBody className="flex h-full flex-col gap-3 overflow-hidden">
-          {false && !isLocked && (
-            <form
-              className="flex gap-2"
-              onSubmit={async (e) => {
-                e.preventDefault();
+          <div
+            ref={currentMatchScrollRef}
+            onScroll={(event) => {
+              const maxIndex = Math.max(courts.length - 1, 0);
+              const nextIndex = Math.min(maxIndex, Math.max(0, Math.round(event.currentTarget.scrollLeft / COURT_CARD_STEP)));
+              setActiveCourtIndex((index) => (index === nextIndex ? index : nextIndex));
+              scheduleCurrentMatchSnap(event.currentTarget);
+            }}
+            className="absolute left-4 right-4 top-[53px] h-[257px] cursor-grab snap-x snap-mandatory overflow-x-auto scroll-smooth active:cursor-grabbing [scroll-padding-inline:16px] [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+            onPointerDown={(event) => {
+              if ((event.target as HTMLElement).closest("button,input,textarea,[contenteditable=true]")) return;
+              if (currentMatchSnapTimerRef.current != null) window.clearTimeout(currentMatchSnapTimerRef.current);
+              event.currentTarget.style.scrollBehavior = "auto";
+              currentMatchDragRef.current = {
+                active: true,
+                startX: event.clientX,
+                scrollLeft: event.currentTarget.scrollLeft,
+              };
+              event.currentTarget.setPointerCapture(event.pointerId);
+            }}
+            onPointerMove={(event) => {
+              if (!currentMatchDragRef.current.active) return;
+              event.preventDefault();
+              event.currentTarget.scrollLeft = currentMatchDragRef.current.scrollLeft - (event.clientX - currentMatchDragRef.current.startX);
+              scheduleCurrentMatchSnap(event.currentTarget);
+            }}
+            onPointerUp={(event) => {
+              currentMatchDragRef.current.active = false;
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                event.currentTarget.releasePointerCapture(event.pointerId);
+              }
+              snapCurrentMatchScroll(event.currentTarget);
+            }}
+            onPointerCancel={(event) => {
+              currentMatchDragRef.current.active = false;
+              snapCurrentMatchScroll(event.currentTarget);
+            }}
+            onLostPointerCapture={(event) => {
+              currentMatchDragRef.current.active = false;
+              snapCurrentMatchScroll(event.currentTarget);
+            }}
+          >
+            <div className="flex h-full gap-3">
+              {courts.map((court) => {
+                const match = matchById(court.currentMatchId);
+                const teamA = match ? teamById(match.teamAId) : undefined;
+                const teamB = match ? teamById(match.teamBId) : undefined;
 
-                // ตัดช่องว่างหัวท้าย
-                const raw = playerName.trim();
-                if (!raw) return;
-
-                // แยกชื่อด้วยเว้นวรรค (รองรับหลายช่องว่าง)
-                const names = raw
-                  .split(/\s+/g)          // ← จุดสำคัญ
-                  .map((n) => n.trim())
-                  .filter(Boolean);
-
-                // กันชื่อซ้ำในชุดเดียว
-                const uniqueNames = Array.from(new Set(names));
-                if (uniqueNames.length === 0) return;
-
-                try {
-                  await upsertPlayers(props.sessionId, uniqueNames);
-                  setPlayerName("");
-                } catch (e: any) {
-                  setToast({
-                    id: nanoid(),
-                    kind: "error",
-                    message: e?.message ?? "เพิ่มผู้เล่นไม่สำเร็จ",
-                  });
-                }
-              }}
-            >
-              <div className="flex-1">
-                <Input value={playerName} onChange={setPlayerName} placeholder="พิมพ์ชื่อแล้วกด Enter" />
-              </div>
-              <button
-                type="submit"
-                className="rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold"
-              >
-                เพิ่ม
-              </button>
-            </form>
-          )}
-
-          {false && !isLocked && recentPlayers.length > 0 && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="text-xs font-semibold text-slate-600">Recent Players</div>
-                <button
-                  type="button"
-                  className="text-xs font-semibold text-rose-700 transition-colors hover:text-rose-600"
-                  onClick={() => {
-                    clearRecentPlayers();
-                    setRecentPlayers([]);
-                    setToast({ id: nanoid(), kind: "success", message: "ล้าง Recent Players แล้ว" });
-                  }}
-                >
-                  รีเซ็ต
-                </button>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {recentPlayers.map((rp) => (
-                  <button
-                    key={rp.name}
-                    type="button"
-                    className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold transition-all duration-200 hover:bg-slate-50"
-                    onClick={async () => {
-                      try {
-                        await addPlayer(props.sessionId, { name: rp.name, avatarDataUrl: rp.avatarDataUrl ?? undefined });
-                        removeRecentAfterAdd(rp.name);
-                        setToast({ id: nanoid(), kind: "success", message: `เพิ่ม ${rp.name} แล้ว` });
-                      } catch (e: any) {
-                        try {
-                          await addPlayer(props.sessionId, { name: rp.name });
-                          removeRecentAfterAdd(rp.name);
-                          setToast({ id: nanoid(), kind: "success", message: `เพิ่ม ${rp.name} แล้ว` });
-                        } catch (e2: any) {
-                          try {
-                            const sameNameCount = players.filter((p) => p.name.replace(/\u200B/g, "") === rp.name).length;
-                            await addPlayer(props.sessionId, { name: `${rp.name}${"\u200B".repeat(Math.max(1, sameNameCount))}` });
-                            removeRecentAfterAdd(rp.name);
-                            setToast({ id: nanoid(), kind: "success", message: `เพิ่ม ${rp.name} แล้ว` });
-                          } catch (e3: any) {
-                            setToast({ id: nanoid(), kind: "error", message: e3?.message ?? e2?.message ?? e?.message ?? "เพิ่มผู้เล่นจาก Recent ไม่สำเร็จ" });
-                          }
-                        }
-                      }
+                return (
+                  <CourtMatchCard
+                    key={court.id}
+                    court={court}
+                    match={match}
+                    teamA={teamA}
+                    teamB={teamB}
+                    playerById={playerById}
+                    coverageCompleted={coverageCompleted}
+                    canAssign={!!session?.locked && !coverageCompleted}
+                    onAssignNext={() => void handleAssignNext(court.id)}
+                    onCancelMatch={() => {
+                      if (!match) return;
+                      setConfirmCancelMatch({ matchId: match.id, courtId: court.id });
                     }}
-                  >
-                    + {rp.name}
-                  </button>
-                ))}
-              </div>
+                    onFinishMatch={() => {
+                      if (!match) return;
+                      setWinnerTeamId(match.teamAId);
+                      setShowFinish({ match });
+                    }}
+                  />
+                );
+              })}
+              <div
+                aria-hidden="true"
+                className="h-px flex-none"
+                style={{ width: `max(calc(100% - ${COURT_CARD_WIDTH + COURT_CARD_GAP}px), 0px)` }}
+              />
+            </div>
+          </div>
+
+          {courts.length > 1 && (
+            <div className="absolute bottom-[19px] left-1/2 flex h-3 -translate-x-1/2 items-center gap-1">
+              {courts.map((court, index) => (
+                <button
+                  key={court.id}
+                  type="button"
+                  aria-label={`Show court ${court.id}`}
+                  onClick={() => {
+                    currentMatchScrollRef.current?.scrollTo({ left: index * COURT_CARD_STEP, behavior: "smooth" });
+                    setActiveCourtIndex(index);
+                  }}
+                  className={`h-3 rounded-[46px] border border-black/5 transition-[width,opacity] ${
+                    activeCourtIndex === index ? "w-[31px] bg-white" : "w-3 bg-white/20"
+                  }`}
+                />
+              ))}
             </div>
           )}
+        </section>
 
-          <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-            <div className="space-y-2">
-              {players.map((p) => (
-                <div key={p.id} className="rounded-xl border border-slate-100 px-3 py-2">
-                  <div className="flex items-center gap-3">
-                    <AvatarBadge
-                      name={p.name}
-                      imageUrl={p.avatarDataUrl}
-                      sizeClassName="h-12 w-12"
-                      textClassName="text-lg"
-                      className="border border-slate-200"
-                    />
-                    {false ? (
-                      <button
-                        type="button"
-                        onClick={() => window.open(p.avatarDataUrl, "_blank")}
-                        className="h-12 w-12 overflow-hidden rounded-full border border-slate-200"
-                        title="เปิดรูปโปรไฟล์"
-                      >
-                        <img src={p.avatarDataUrl} alt={`avatar-${p.name}`} className="h-full w-full object-cover" />
-                      </button>
-                    ) : (
-                      <div className="h-12 w-12 rounded-full border border-dashed border-slate-300 bg-slate-50" />
-                    )}
+        <UpcomingMatchesPanel
+          rows={queuePreview}
+          playerById={playerById}
+          coverageCompleted={coverageCompleted}
+        />
 
-                    <div className="min-w-0 flex-1">
-                      <div className="font-semibold truncate">{p.name}</div>
-                      <div className="text-xs text-slate-500">{p.stats.wins}-{p.stats.losses} ({p.stats.played})</div>
+        <SectionCard
+          className="mt-6"
+          title={`Players (${players.length})`}
+          right={<span className="text-[14px] text-white/50">{isLocked ? "Locked" : "Editable"}</span>}
+        >
+          <div
+            ref={playerScrollRef}
+            className="-mx-5 mt-4 cursor-grab overflow-x-auto px-5 pb-1 active:cursor-grabbing [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+            onPointerDown={(event) => {
+              if ((event.target as HTMLElement).closest("input,textarea,[contenteditable=true]")) return;
+              playerDragRef.current = {
+                active: true,
+                startX: event.clientX,
+                scrollLeft: event.currentTarget.scrollLeft,
+              };
+              event.currentTarget.setPointerCapture(event.pointerId);
+            }}
+            onPointerMove={(event) => {
+              if (!playerDragRef.current.active) return;
+              event.currentTarget.scrollLeft = playerDragRef.current.scrollLeft - (event.clientX - playerDragRef.current.startX);
+            }}
+            onPointerUp={(event) => {
+              playerDragRef.current.active = false;
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                event.currentTarget.releasePointerCapture(event.pointerId);
+              }
+            }}
+            onPointerCancel={() => {
+              playerDragRef.current.active = false;
+            }}
+          >
+            <div className="flex min-w-max gap-3">
+              {players.map((player) => (
+                <div
+                  key={player.id}
+                  className="flex h-[60px] w-[158px] flex-none items-center gap-3 rounded-[20px] border border-white/5 bg-white/[0.05] px-4"
+                >
+                  <AvatarBadge
+                    name={player.name}
+                    imageUrl={player.avatarDataUrl}
+                    sizeClassName="h-8 w-8"
+                    textClassName="text-[14px]"
+                  />
+                  <div className="min-w-0">
+                    <div className="truncate text-[16px] font-medium leading-5 text-white">{player.name}</div>
+                    <div className="mt-1 truncate whitespace-nowrap text-[12px] leading-[15px] text-white/50">
+                      {player.stats.played} played
                     </div>
                   </div>
-
-                  {false && !isLocked && (
-                    <div className="mt-2 flex flex-wrap items-center gap-3 text-xs font-semibold">
-                      <label className="cursor-pointer text-slate-700">
-                        {isMobile ? "เลือกรูป" : "อัปโหลดรูป"}
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          disabled={uploadingPlayerId === p.id}
-                          onChange={async (e) => {
-                            const f = e.target.files?.[0];
-                            e.currentTarget.value = "";
-                            if (!f) return;
-
-                            try {
-                              setUploadingPlayerId(p.id);
-                              const avatarDataUrl = await compressImageToDataUrl(f, 320, 0.78);
-                              await updatePlayerAvatar(props.sessionId, p.id, avatarDataUrl);
-                              const recentNext = [
-                                ...recentPlayers.filter((x) => x.name !== p.name),
-                                { name: p.name, avatarDataUrl, usedAt: Date.now() },
-                              ].slice(0, 12);
-                              setRecentPlayers(recentNext);
-                              saveRecentPlayers(recentNext);
-                              setToast({ id: nanoid(), kind: "success", message: `อัปโหลดรูปของ ${p.name} แล้ว` });
-                            } catch (err: any) {
-                              setToast({ id: nanoid(), kind: "error", message: err?.message ?? "อัปโหลดรูปไม่สำเร็จ" });
-                            } finally {
-                              setUploadingPlayerId(null);
-                            }
-                          }}
-                        />
-                      </label>
-
-                      {p.avatarDataUrl && (
-                        <button
-                          className="text-amber-700"
-                          disabled={uploadingPlayerId === p.id}
-                          onClick={async () => {
-                            try {
-                              setUploadingPlayerId(p.id);
-                              await updatePlayerAvatar(props.sessionId, p.id, undefined);
-                              const recentNext = recentPlayers.map((x) => (x.name === p.name ? { ...x, avatarDataUrl: undefined } : x));
-                              setRecentPlayers(recentNext);
-                              saveRecentPlayers(recentNext);
-                              setToast({ id: nanoid(), kind: "success", message: `ลบรูปของ ${p.name} แล้ว` });
-                            } catch (e: any) {
-                              setToast({ id: nanoid(), kind: "error", message: e?.message ?? "ลบรูปไม่สำเร็จ" });
-                            } finally {
-                              setUploadingPlayerId(null);
-                            }
-                          }}
-                        >
-                          ลบรูป
-                        </button>
-                      )}
-
-                      <button
-                        className="text-rose-600"
-                        onClick={async () => {
-                          try {
-                            const { deletePlayer } = await import("../features/session/api");
-                            await deletePlayer(props.sessionId, p.id);
-                          } catch (e: any) {
-                            setToast({ id: nanoid(), kind: "error", message: e?.message ?? "ลบไม่สำเร็จ" });
-                          }
-                        }}
-                      >
-                        ลบผู้เล่น
-                      </button>
-                    </div>
-                  )}
                 </div>
               ))}
-              {players.length === 0 && <div className="text-sm text-slate-500">ยังไม่มีผู้เล่น</div>}
+
+              {players.length === 0 && (
+                <div className="flex h-[76px] w-[250px] flex-none items-center justify-center rounded-[20px] border border-dashed border-white/10 px-4 text-center text-[14px] text-white/45">
+                  No players in this session yet.
+                </div>
+              )}
             </div>
           </div>
+        </SectionCard>
 
-          {!isLocked && teams.length === 0 && <Divider />}
-
-          {!isLocked && teams.length === 0 && <div className="space-y-2">
-            <Button
-              disabled={!canStart}
-              onClick={async () => {
-                try {
-                  await assertHost(props.sessionId);
-                  await startOnce(props.sessionId);
-
-                  const autoOddMode = players.length % 2 === 1 ? "three_player_rotation" : "none";
-                  await updateSessionCore(props.sessionId, { config: { ...session!.config, oddMode: autoOddMode } });
-
-                  // Create teams (once), initialize queue
-                  const { teams: newTeams, warnings } = buildInitialTeams({ ...session!, config: { ...session!.config, oddMode: autoOddMode } }, players);
-                  if (warnings.length) setToast({ id: nanoid(), kind: "info", message: warnings[0] });
-
-                  await setTeamsAndQueue(props.sessionId, newTeams);
-
-                  setToast({ id: nanoid(), kind: "success", message: `Started. ${autoOddMode === "none" ? "Even players flow" : "3-player rotation flow"}.` });
-                } catch (e: any) {
-                  setToast({ id: nanoid(), kind: "error", message: e?.message ?? "Failed to start" });
-                }
-              }}
+        <SectionCard className="mt-6" title="Session tools">
+          <div className="mt-2 grid grid-cols-2 gap-3">
+            <ActionButton
+              tone="ghost"
+              disabled={!isLocked}
+              onClick={() => setConfirmResetPairing(true)}
             >
-              START
-            </Button>
-
-            <div className="text-xs text-slate-500">
-              START shuffles once, creates teams (odd mode supported), locks editing.
-            </div>
-          </div>}
-        </CardBody>
-      </Card>
-
-
-      <Card>
-        <CardHeader title="Courts" right={coverageCompleted ? <Chip tone="good">จับคู่ครบแล้ว</Chip> : undefined} />
-        <CardBody className="space-y-3">
-          {courts.map((c) => {
-            const m = matchById(c.currentMatchId ?? undefined);
-            const a = m ? teamById(m.teamAId) : undefined;
-            const b = m ? teamById(m.teamBId) : undefined;
-
-            return (
-              <div key={c.id} className="rounded-2xl border border-slate-200 p-3">
-                <div className="flex items-center justify-between">
-                  <div className="font-semibold">Court {c.id}</div>
-                  <Chip tone={m?.status === "in_progress" ? "good" : m ? "muted" : "warn"}>
-                    {m ? m.status : "idle"}
-                  </Chip>
-                </div>
-
-                {m ? (
-                  <div className="mt-2 text-sm">
-                    <div className="font-semibold">
-                      <div className=" mt-2 text-sm font-semibold flex flex-wrap gap-5"><TeamLine team={a} playerById={playerById} /><div className="text-slate-400 flex items-center">vs</div><TeamLine team={b} playerById={playerById} /></div>
-                      {m.isFallback ? <span className="ml-2 text-xs text-amber-700">(fallback)</span> : null}
-                    </div>
-
-                    <div className="mt-2 grid grid-cols-2 gap-2">
-
-                      <Button
-                        variant="secondary"
-                        onClick={() => setConfirmCancelMatch({ matchId: m.id, courtId: c.id })}
-                      >
-                        Cancel
-                      </Button>
-
-                      <Button
-                        variant="primary"
-                        disabled={m.status === "finished" || m.status === "canceled"}
-                        onClick={() => {
-                          setWinnerTeamId(m.teamAId);
-                          setShowFinish({ match: m });
-                        }}
-                      >
-                        Finish
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="mt-2">
-                    <Button
-                      variant="secondary"
-                      disabled={!session?.locked}
-                      onClick={async () => {
-                        await assignNextForCourt(props.sessionId, c.id);
-                      }}
-                    >
-                      Assign Next Match
-                    </Button>
-                    <div className="text-xs text-slate-500 mt-1">{coverageCompleted ? "รอบนี้จับคู่ครบแล้ว แต่ยังลงสนามต่อจากคิวถัดไปได้" : "Court idles only if no valid match exists."}</div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-          {coverageCompleted && (
-            <div className="pt-1 text-center">
-              <button
-                type="button"
-                className="text-sm font-semibold text-sky-600 underline-offset-2 transition-colors hover:text-sky-700 hover:underline"
-                onClick={() => setConfirmResetPairing(true)}
-              >
-                แนะนำจับคู่ใหม่
-              </button>
-            </div>
-          )}
-        </CardBody>
-      </Card>
-
-      <Card>
-        <CardHeader title="Queue (available teams)" />
-        <CardBody>
-          <div className="text-sm text-slate-600 space-y-2">
-            {(session?.queueTeams ?? []).map((tid) => {
-              const t = teamById(tid);
-              if (!t) return null;
-              return (
-                <div key={tid} className="rounded-xl border border-slate-100 px-3 py-2">
-                  <TeamLine team={t} playerById={playerById} />
-                  <div className="text-xs text-slate-500">
-                    played {t.stats.played} · W {t.stats.wins} · L {t.stats.losses}
-                    {t.playerIds.length === 3 ? " · (3-player team)" : ""}
-                  </div>
-                </div>
-              );
-            })}
-            {(session?.queueTeams ?? []).length === 0 && <div className="text-sm text-slate-500">Queue empty.</div>}
+              Reset pairing
+            </ActionButton>
+            <ActionButton tone="ghost" onClick={() => setConfirmResetAll(true)}>
+              Reset session
+            </ActionButton>
+            <ActionButton tone="danger" className="col-span-2" onClick={() => setConfirmEndSession(true)}>
+              End Session
+            </ActionButton>
           </div>
-        </CardBody>
-      </Card>
+        </SectionCard>
 
-      <Card className="max-h-[460px]">
-        <CardHeader title="Recent Results" />
-        <CardBody className="space-y-2 max-h-[410px] overflow-y-auto">
-          {results.map((r) => {
-            const ta = teamById(r.teamAId);
-            const tb = teamById(r.teamBId);
-            const win = r.winnerTeamId;
-            return (
-
-              <div key={r.id} className="rounded-xl border border-slate-100 px-3 py-2 text-sm">
-                <div className="text-xs text-slate-500">Court {r.courtId}</div>
-                <div className="font-semibold mt-2 text-sm font-semibold flex flex-wrap gap-5">
-                  <TeamLine team={ta} playerById={playerById} playedIds={r.teamAPlayedPlayerIds} highlightWinner={win === r.teamAId} /> <span className="text-slate-400 flex items-center">vs</span> <TeamLine team={tb} playerById={playerById} playedIds={r.teamBPlayedPlayerIds} highlightWinner={win === r.teamBId} />
-                </div>
-                <div className="text-xs text-slate-600 mt-1">
-                  {r.isFallback ? "fallback · " : ""}
-                  <span className="font-semibold">{formatScoreByTeam(r)}</span>
-                </div>
-
+        {showQr && (
+          <Modal title="Session QR" onClose={() => setShowQr(false)}>
+            <div className="space-y-3">
+              <div className="flex justify-center">
+                <img src={qrUrl} alt={`QR-${props.sessionId}`} className="rounded-[20px] border border-white/10 bg-white p-3" />
               </div>
-            );
-          })}
-          {results.length === 0 && <div className="text-sm text-slate-500">No results yet.</div>}
-        </CardBody>
-      </Card>
+              <div className="text-center font-mono text-xs text-white/50">{viewerUrl}</div>
+            </div>
+          </Modal>
+        )}
 
+        {pendingAssign && (
+          <AssignPlayersModal
+            assignment={pendingAssign}
+            playerById={playerById}
+            onClose={() => setPendingAssign(null)}
+            onConfirm={async (payload) => {
+              try {
+                await assignPreparedMatch(
+                  pendingAssign.courtId,
+                  pendingAssign.teamA,
+                  pendingAssign.teamB,
+                  payload.teamAPlayedPlayerIds,
+                  payload.teamBPlayedPlayerIds,
+                );
+                setToast({ id: nanoid(), kind: "success", message: "Match assigned." });
+                setPendingAssign(null);
+              } catch (error: any) {
+                setToast({ id: nanoid(), kind: "error", message: error?.message ?? "Failed to assign next match" });
+              }
+            }}
+          />
+        )}
 
-      <StatsTable cardClassName={statsCardHeightClass} players={players} editable onReset={async () => {
-        try {
-          await resetTableStats(props.sessionId);
-          setToast({ id: nanoid(), kind: "success", message: "รีเซ็ตตารางสถิติแล้ว" });
-        } catch (e: any) {
-          setToast({ id: nanoid(), kind: "error", message: e?.message ?? "รีเซ็ตตารางไม่สำเร็จ" });
-        }
-      }} />
+        {showFinish && (
+          <FinishModal
+            match={showFinish.match}
+            teamA={teamById(showFinish.match.teamAId)!}
+            teamB={teamById(showFinish.match.teamBId)!}
+            playerById={playerById}
+            winnerTeamId={winnerTeamId}
+            setWinnerTeamId={setWinnerTeamId}
+            onClose={() => setShowFinish(null)}
+            onConfirm={async (payload) => {
+              try {
+                await finishMatch(props.sessionId, showFinish.match.id, winnerTeamId, payload);
+                setToast({ id: nanoid(), kind: "success", message: "Match finished." });
+                setShowFinish(null);
+              } catch (error: any) {
+                setToast({ id: nanoid(), kind: "error", message: error?.message ?? "Finish failed" });
+              }
+            }}
+          />
+        )}
 
-      <Card>
-        <CardHeader title="รีเซ็ต" />
-        <CardBody className="space-y-2">
-          <Button
-            variant="secondary"
-            disabled={!isLocked}
-            onClick={() => setConfirmResetPairing(true)}
-          >
-            จับคู่ใหม่
-          </Button>
+        {confirmHome && (
+          <ConfirmDrawer
+            title="Leave session?"
+            description="You can come back to this host session later from the home screen."
+            onCancel={() => setConfirmHome(false)}
+            onConfirm={() => {
+              history.pushState({}, "", "/");
+              window.dispatchEvent(new PopStateEvent("popstate"));
+            }}
+            confirmLabel="Back to home"
+          />
+        )}
 
-          <Button
-            variant="danger"
-            onClick={() => setConfirmResetAll(true)}
-          >
-            รีเซ็ต
-          </Button>
-        </CardBody>
-      </Card>
-      {showFinish && (
+        {confirmEndSession && (
+          <ConfirmDrawer
+            title="End session?"
+            description="This will close the room and remove it from resume. Players will not be able to rejoin this session."
+            onCancel={() => setConfirmEndSession(false)}
+            onConfirm={async () => {
+              try {
+                await endSession(props.sessionId);
+                clearHostSession();
+                history.pushState({}, "", "/");
+                window.dispatchEvent(new PopStateEvent("popstate"));
+              } catch (error: any) {
+                setToast({ id: nanoid(), kind: "error", message: error?.message ?? "Failed to end session" });
+                setConfirmEndSession(false);
+              }
+            }}
+            confirmLabel="End Session"
+            confirmTone="danger"
+          />
+        )}
 
-        <FinishModal
+        {confirmResetPairing && (
+          <ConfirmDrawer
+            title="Reset pairing?"
+            description="This rebuilds teams and queue while keeping finished player history."
+            onCancel={() => setConfirmResetPairing(false)}
+            onConfirm={async () => {
+              try {
+                const { resetPairing } = await import("../features/session/mutations");
+                const response = await resetPairing(props.sessionId);
+                setToast({ id: nanoid(), kind: "success", message: response.warnings?.[0] ?? "Pairing rebuilt." });
+              } catch (error: any) {
+                setToast({ id: nanoid(), kind: "error", message: error?.message ?? "Failed to reset pairing" });
+              } finally {
+                setConfirmResetPairing(false);
+              }
+            }}
+            confirmLabel="Reset pairing"
+          />
+        )}
 
-          match={showFinish.match}
-          teamA={teamById(showFinish.match.teamAId)!}
-          teamB={teamById(showFinish.match.teamBId)!}
-          playerById={playerById}
-          winnerTeamId={winnerTeamId}
-          setWinnerTeamId={setWinnerTeamId}
-          onClose={() => setShowFinish(null)}
-          onConfirm={async (played) => {
-            try {
-              await finishMatch(props.sessionId, showFinish.match.id, winnerTeamId, played);
-              await assignNextForCourt(props.sessionId, showFinish.match.courtId);
-              setToast({ id: nanoid(), kind: "success", message: "บันทึกผลแล้ว และพยายามจัดแมตช์ถัดไป" });
-              setShowFinish(null);
-            } catch (e: any) {
-              setToast({ id: nanoid(), kind: "error", message: e?.message ?? "Finish ไม่สำเร็จ" });
-            }
-          }
-          }
-        />
-      )}
-      {confirmHome && (
-        <ConfirmDrawer
-          title="ยืนยันกลับหน้าแรก"
-          description="ต้องการกลับหน้าแรกใช่ไหม? Session ปัจจุบันจะยังอยู่และกลับเข้ามาได้"
-          onCancel={() => setConfirmHome(false)}
-          onConfirm={() => {
-            history.pushState({}, "", "/");
-            window.dispatchEvent(new PopStateEvent("popstate"));
-          }}
-          confirmLabel="กลับหน้าแรก"
-        />
-      )}
-      {confirmResetPairing && (
-        <ConfirmDrawer
-          title="ยืนยัน Reset Pairing"
-          description="จะรีเซ็ตทีมใหม่โดยไม่รีเซ็ตสถิติผู้เล่น"
-          onCancel={() => setConfirmResetPairing(false)}
-          onConfirm={async () => {
-            try {
-              const { resetPairing } = await import("../features/session/mutations");
-              const r = await resetPairing(props.sessionId);
-              setToast({ id: nanoid(), kind: "success", message: r.warnings?.[0] ?? "รีเซ็ตทีมใหม่แล้ว" });
-            } catch (e: any) {
-              setToast({ id: nanoid(), kind: "error", message: e?.message ?? "รีเซ็ตทีมไม่สำเร็จ" });
-            } finally {
-              setConfirmResetPairing(false);
-            }
-          }}
-        />
-      )}
-      {confirmResetAll && (
-        <ConfirmDrawer
-          title="ยืนยัน Reset All"
-          description="จะรีเซ็ตทั้งหมด แต่เก็บรายชื่อผู้เล่นไว้"
-          onCancel={() => setConfirmResetAll(false)}
-          onConfirm={async () => {
-            try {
-              const { resetAll } = await import("../features/session/mutations");
-              await resetAll(props.sessionId, true);
-              setToast({ id: nanoid(), kind: "success", message: "รีเซ็ตทั้งหมดแล้ว (เก็บรายชื่อ)" });
-            } catch (e: any) {
-              setToast({ id: nanoid(), kind: "error", message: e?.message ?? "รีเซ็ตทั้งหมดไม่สำเร็จ" });
-            } finally {
-              setConfirmResetAll(false);
-            }
-          }}
-        />
-      )}
-      {confirmCancelMatch && (
-        <ConfirmDrawer
-          title="ยืนยันยกเลิกแมตช์"
-          description="ต้องการยกเลิกแมตช์นี้จริงไหม?"
-          onCancel={() => setConfirmCancelMatch(null)}
-          onConfirm={async () => {
-            try {
-              const { cancelMatchAndReschedule } = await import("../features/session/mutations");
-              await cancelMatchAndReschedule(props.sessionId, confirmCancelMatch.matchId);
-              await assignNextForCourt(props.sessionId, confirmCancelMatch.courtId);
-              setToast({ id: nanoid(), kind: "info", message: "ยกเลิกแมตช์แล้ว" });
-            } catch (e: any) {
-              setToast({ id: nanoid(), kind: "error", message: e?.message ?? "ยกเลิกแมตช์ไม่สำเร็จ" });
-            } finally {
-              setConfirmCancelMatch(null);
-            }
-          }}
-          confirmLabel="ยืนยันยกเลิก"
-        />
-      )}
+        {confirmResetAll && (
+          <ConfirmDrawer
+            title="Reset session?"
+            description="This clears matches and queue but keeps the player names in this session."
+            onCancel={() => setConfirmResetAll(false)}
+            onConfirm={async () => {
+              try {
+                const { resetAll } = await import("../features/session/mutations");
+                await resetAll(props.sessionId, true);
+                setToast({ id: nanoid(), kind: "success", message: "Session reset." });
+              } catch (error: any) {
+                setToast({ id: nanoid(), kind: "error", message: error?.message ?? "Failed to reset session" });
+              } finally {
+                setConfirmResetAll(false);
+              }
+            }}
+            confirmLabel="Reset session"
+          />
+        )}
+
+        {confirmCancelMatch && (
+          <ConfirmDrawer
+            title="Cancel current match?"
+            description="The teams will go back into the queue and the court will be reopened."
+            onCancel={() => setConfirmCancelMatch(null)}
+            onConfirm={async () => {
+              try {
+                const { cancelMatchAndReschedule } = await import("../features/session/mutations");
+                await cancelMatchAndReschedule(props.sessionId, confirmCancelMatch.matchId);
+                setToast({ id: nanoid(), kind: "success", message: "Match canceled." });
+              } catch (error: any) {
+                setToast({ id: nanoid(), kind: "error", message: error?.message ?? "Failed to cancel match" });
+              } finally {
+                setConfirmCancelMatch(null);
+              }
+            }}
+            confirmLabel="Cancel match"
+          />
+        )}
+      </div>
     </div>
-
   );
 }
 
-async function compressImageToDataUrl(file: File, maxEdge = 320, quality = 0.8): Promise<string> {
-  const dataUrl = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("อ่านไฟล์รูปไม่สำเร็จ"));
-    reader.onload = () => resolve(String(reader.result ?? ""));
-    reader.readAsDataURL(file);
-  });
-
-  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-    const image = new Image();
-    image.onerror = () => reject(new Error("โหลดรูปไม่สำเร็จ"));
-    image.onload = () => resolve(image);
-    image.src = dataUrl;
-  });
-
-  const scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
-  const width = Math.max(1, Math.round(img.width * scale));
-  const height = Math.max(1, Math.round(img.height * scale));
-
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("ไม่สามารถประมวลผลรูปได้");
-  ctx.drawImage(img, 0, 0, width, height);
-
-  return canvas.toDataURL("image/jpeg", quality);
+function HeaderActionButton(props: { children: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={props.onClick}
+      className="flex h-9 items-center justify-center rounded-full border border-white/10 bg-white/5 px-3 text-[13px] font-medium text-white transition-transform active:scale-[0.97]"
+    >
+      {props.children}
+    </button>
+  );
 }
 
-function TeamLine(props: { team: Team | undefined; playerById: (id: string) => Player | undefined; playedIds?: string[]; highlightWinner?: boolean }) {
-  if (!props.team) return <div className="font-semibold">—</div>;
+function SectionCard(props: { title: string; right?: ReactNode; children: ReactNode; className?: string }) {
+  return (
+    <section className={`rounded-[20px] border border-white/5 bg-white/[0.06] p-5 ${props.className ?? ""}`}>
+      <div className="flex items-start justify-between gap-4">
+        <h2 className="text-[18px] font-medium leading-[23px] text-white">{props.title}</h2>
+        {props.right}
+      </div>
+      {props.children}
+    </section>
+  );
+}
+
+function ActionButton(props: {
+  children: ReactNode;
+  onClick?: () => void | Promise<void>;
+  disabled?: boolean;
+  tone: "primary" | "outline" | "ghost" | "danger";
+  className?: string;
+}) {
+  const toneClass =
+    props.tone === "primary"
+      ? "bg-[#37B64B] text-white shadow-[0_0_30px_rgba(55,182,75,0.2)]"
+      : props.tone === "outline"
+      ? "border border-[#37B64B] bg-transparent text-white"
+      : props.tone === "danger"
+      ? "bg-[#7A1F24] text-white"
+      : "border border-white/10 bg-white/[0.04] text-white";
 
   return (
-    <div className={`flex flex-wrap items-center gap-1 font-semibold rounded-full px-2 py-1 ${props.highlightWinner ? "bg-green-50 border border-green-500" : ""}`}>
-      {(props.playedIds ?? props.team.playerIds).map((id, idx) => {
-        const p = props.playerById(id);
-        return (
-          <div key={id} className="inline-flex items-center gap-1">
-            <AvatarBadge
-              name={p?.name ?? "?"}
-              imageUrl={p?.avatarDataUrl}
-              sizeClassName="h-6 w-6"
-              textClassName="text-[10px]"
-              className="border border-slate-200"
-            />
-            <span>{p?.name ?? "?"}</span>
-            {idx < props.team!.playerIds.length - 1 && <span className="text-slate-400"></span>}
-          </div>
-        );
-      })}
+    <button
+      type="button"
+      disabled={props.disabled}
+      onClick={props.onClick}
+      className={`flex h-[52px] items-center justify-center rounded-[16px] px-4 text-[16px] font-medium leading-5 transition-transform active:scale-[0.98] disabled:opacity-45 ${toneClass} ${props.className ?? ""}`}
+    >
+      {props.children}
+    </button>
+  );
+}
+
+function TopThreePodium(props: { players: Array<Player | undefined> }) {
+  return (
+    <section className="relative mt-6 h-[211px] overflow-hidden rounded-[20px] border border-white/5 bg-white/[0.05]">
+      <h2 className="absolute left-[19px] top-5 text-[16px] font-medium leading-5 text-white">Top 3 player</h2>
+      <PodiumCard
+        rank={2}
+        player={props.players[0]}
+        tone="silver"
+        placementClassName="left-[5.28%] top-[91px] h-[120px] w-[27.39%]"
+        compact
+      />
+      <PodiumCard
+        rank={1}
+        player={props.players[1]}
+        tone="gold"
+        placementClassName="left-1/2 top-[57px] h-[154px] w-[32.91%] -translate-x-1/2"
+      />
+      <PodiumCard
+        rank={3}
+        player={props.players[2]}
+        tone="bronze"
+        placementClassName="right-[5.28%] top-[91px] h-[120px] w-[27.39%]"
+        compact
+      />
+    </section>
+  );
+}
+
+function PodiumCard(props: {
+  rank: 1 | 2 | 3;
+  player?: Player;
+  tone: "gold" | "silver" | "bronze";
+  placementClassName: string;
+  compact?: boolean;
+}) {
+  const badgeColor =
+    props.tone === "gold" ? "bg-[#FFCE5C]" : props.tone === "silver" ? "bg-[#C0C0C0]" : "bg-[#B38859]";
+  const cardGradient =
+    props.tone === "gold"
+      ? "bg-[linear-gradient(180deg,#29492B_0%,#193321_100%)]"
+      : "bg-[linear-gradient(180deg,#25392E_0%,#182E20_100%)]";
+
+  return (
+    <div
+      className={`absolute flex flex-col items-center rounded-t-[20px] border-x border-t border-white/5 px-3 text-center ${cardGradient} ${props.placementClassName}`}
+    >
+      <div className={`absolute -top-4 flex h-8 w-8 items-center justify-center rounded-full text-[16px] font-medium leading-5 text-black ${badgeColor}`}>
+        {props.rank}
+      </div>
+      <div className="mt-6 max-w-full truncate text-[16px] font-normal leading-5 text-white">{props.player?.name ?? "-"}</div>
+      <div className={`${props.compact ? "mt-[11px] text-[34px] leading-[43px]" : "mt-2 text-[50px] leading-[63px]"} font-normal text-[#37B64B]`}>
+        {props.player?.stats.wins ?? 0}
+      </div>
+      <div className={`${props.compact ? "-mt-px" : "mt-[7px]"} text-[14px] font-normal leading-[18px] text-white/20`}>Wins</div>
     </div>
+  );
+}
+
+function CourtMatchCard(props: {
+  court: Court;
+  match?: Match;
+  teamA?: Team;
+  teamB?: Team;
+  playerById: (id: string) => Player | undefined;
+  coverageCompleted: boolean;
+  canAssign: boolean;
+  onAssignNext: () => void | Promise<void>;
+  onCancelMatch: () => void;
+  onFinishMatch: () => void;
+}) {
+  const hasMatch = !!props.match && !!props.teamA && !!props.teamB;
+
+  return (
+    <article
+      data-court-card
+      className="relative h-[257px] w-[283px] flex-none snap-start overflow-hidden rounded-[10px] border border-white/5 bg-black/5"
+    >
+      <div className="absolute left-0 right-0 top-4 flex h-5 items-center justify-center gap-2.5">
+        <span className={`h-2 w-2 rounded-full ${hasMatch ? "bg-[#37B64B]" : "bg-white/25"}`} />
+        <span className="text-[16px] font-normal leading-5 text-white">Court {props.court.id}</span>
+      </div>
+
+      {hasMatch ? (
+        <>
+          <CourtVisual
+            teamA={props.teamA!}
+            teamB={props.teamB!}
+            teamAPlayedIds={props.match?.teamAPlayedPlayerIds}
+            teamBPlayedIds={props.match?.teamBPlayedPlayerIds}
+            playerById={props.playerById}
+          />
+          <div className="absolute left-4 top-[199px] flex h-[42px] w-[251px] gap-2">
+            <MatchCardButton tone="ghost" onClick={props.onCancelMatch}>
+              Cancel
+            </MatchCardButton>
+            <MatchCardButton tone="outline" onClick={props.onFinishMatch}>
+              End match
+            </MatchCardButton>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="absolute left-4 top-[53px] h-[134px] w-[251px] rounded-[10px] border border-dashed border-white/10 px-4 py-4">
+            <div className="text-[16px] font-medium leading-5 text-white">
+              {props.coverageCompleted ? "Coverage completed" : "Court is ready"}
+            </div>
+            <p className="mt-1 text-[13px] font-normal leading-[18px] text-white/55">
+              {props.coverageCompleted
+                ? "All players have completed the current rotation. Rebuild pairing when ready."
+                : "Assign the next valid match from the available queue."}
+            </p>
+          </div>
+          <div className="absolute left-4 top-[199px] h-[42px] w-[121.5px]">
+            <MatchCardButton tone="outline" disabled={!props.canAssign} onClick={props.onAssignNext}>
+              Assign next
+            </MatchCardButton>
+          </div>
+        </>
+      )}
+    </article>
+  );
+}
+
+function MatchCardButton(props: {
+  children: ReactNode;
+  tone: "ghost" | "outline";
+  disabled?: boolean;
+  onClick?: () => void | Promise<void>;
+}) {
+  const toneClass =
+    props.tone === "outline"
+      ? "border-[#37B64B] text-white disabled:border-white/20 disabled:text-white/30"
+      : "border-white/20 text-white/50 disabled:border-white/10 disabled:text-white/30";
+
+  return (
+    <button
+      type="button"
+      disabled={props.disabled}
+      onClick={props.onClick}
+      className={`flex h-full min-w-0 flex-1 items-center justify-center rounded-lg border px-3 text-[16px] font-medium leading-5 transition-transform active:scale-[0.98] disabled:cursor-not-allowed ${toneClass}`}
+    >
+      {props.children}
+    </button>
+  );
+}
+
+function CourtVisual(props: {
+  teamA: Team;
+  teamB: Team;
+  teamAPlayedIds?: string[];
+  teamBPlayedIds?: string[];
+  playerById: (id: string) => Player | undefined;
+}) {
+  const teamAPlayers = getCourtPlayerIds(props.teamA, props.teamAPlayedIds).map((id) => props.playerById(id));
+  const teamBPlayers = getCourtPlayerIds(props.teamB, props.teamBPlayedIds).map((id) => props.playerById(id));
+
+  return (
+    <div
+      className="absolute left-4 top-[50px] h-[134px] w-[251px] bg-center bg-no-repeat"
+      style={{ backgroundImage: `url(${courtsBackground})`, backgroundSize: "251px 134px" }}
+    >
+      <CourtPlayerMarker player={teamAPlayers[0]} className="left-[25px] top-[15px] w-[96px]" />
+      <CourtPlayerMarker player={teamBPlayers[0]} className="right-[25px] top-[15px] w-[96px]" />
+      <CourtPlayerMarker player={teamAPlayers[1]} className="left-[25px] top-[74px] w-[96px]" />
+      <CourtPlayerMarker player={teamBPlayers[1]} className="right-[25px] top-[74px] w-[96px]" />
+    </div>
+  );
+}
+
+function CourtPlayerMarker(props: { player?: Player; className: string }) {
+  const name = props.player?.name ?? "Unknown";
+
+  return (
+    <div className={`absolute flex h-11 flex-col items-center gap-0.5 text-center ${props.className}`}>
+      <AvatarBadge
+        name={name}
+        imageUrl={props.player?.avatarDataUrl}
+        sizeClassName="h-6 w-6"
+        textClassName="text-[12px]"
+        className="border border-white/5"
+      />
+      <div className="max-w-full truncate text-[14px] font-medium leading-[18px] text-white">{name}</div>
+    </div>
+  );
+}
+
+function getCourtPlayerIds(team: Team, playedIds?: string[]) {
+  if (playedIds?.length) return playedIds.slice(0, 2);
+  if (team.playerIds.length <= 2) return team.playerIds;
+  const start = (team.rotationIndex ?? 0) % team.playerIds.length;
+  return [team.playerIds[start], team.playerIds[(start + 1) % team.playerIds.length]];
+}
+
+function UpcomingMatchesPanel(props: {
+  rows: QueuePreviewRow[];
+  playerById: (id: string) => Player | undefined;
+  coverageCompleted: boolean;
+}) {
+  return (
+    <section className="mt-6 rounded-[20px] border border-white/5 bg-white/[0.05] px-[19px] py-5">
+      <h2 className="text-[16px] font-medium leading-5 text-white">Upcoming matches</h2>
+
+      <div className="mt-4 flex flex-col gap-2">
+        {props.rows.map((row) => (
+          <UpcomingMatchRow key={row.id} row={row} playerById={props.playerById} />
+        ))}
+
+        {props.rows.length === 0 && (
+          <div className="flex h-20 w-full items-center justify-center rounded-[10px] border border-dashed border-white/10 bg-white/[0.05] px-4 text-center text-[14px] font-medium leading-[18px] text-white/45">
+            {props.coverageCompleted ? "Queue is clear. Rebuild pairing when you want another round." : "No upcoming matches yet."}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function UpcomingMatchRow(props: { row: QueuePreviewRow; playerById: (id: string) => Player | undefined }) {
+  if (!props.row.teamA) return null;
+
+  return (
+    <article className="flex min-h-20 w-full items-center justify-between gap-2 rounded-[10px] border border-white/5 bg-white/[0.05] px-3 py-3.5">
+      <UpcomingTeam team={props.row.teamA} playerById={props.playerById} />
+
+      {props.row.teamB ? (
+        <>
+          <div className="flex h-5 w-[19px] flex-none items-center justify-center text-[16px] font-normal leading-5 text-white">VS</div>
+          <UpcomingTeam team={props.row.teamB} playerById={props.playerById} align="right" />
+        </>
+      ) : (
+        <div className="ml-auto flex h-[26px] items-center rounded-[46px] border border-white/10 px-3 text-[12px] font-medium leading-[15px] text-white/55">
+          Waiting
+        </div>
+      )}
+    </article>
+  );
+}
+
+function UpcomingTeam(props: {
+  team: Team;
+  playerById: (id: string) => Player | undefined;
+  align?: "left" | "right";
+}) {
+  const ids = props.team.playerIds;
+  const justifyClass = props.align === "right" ? "justify-end" : "justify-start";
+
+  return (
+    <div className="min-w-0 flex-1 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+      <div className={`flex h-11 min-w-full w-max items-center gap-2.5 ${justifyClass}`}>
+        {ids.map((playerId, index) => (
+          <div key={playerId} className="flex flex-none items-center gap-2.5">
+            {index > 0 && (
+              <div className="flex h-8 flex-none items-center justify-center text-[13px] font-medium leading-[18px] text-white">
+                &
+              </div>
+            )}
+            <UpcomingPlayer player={props.playerById(playerId)} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function UpcomingPlayer(props: { player?: Player }) {
+  const name = props.player?.name ?? "?";
+
+  return (
+    <div className="flex h-11 min-w-0 max-w-[36px] flex-none flex-col items-center gap-0.5">
+      <AvatarBadge
+        name={name}
+        imageUrl={props.player?.avatarDataUrl}
+        sizeClassName="h-[22px] w-[22px]"
+        textClassName="text-[11px]"
+        className="border border-white/5"
+      />
+      <div className="max-w-full truncate text-[13px] font-medium leading-[17px] text-white">{name}</div>
+    </div>
+  );
+}
+
+function AssignPlayersModal(props: {
+  assignment: PendingAssign;
+  playerById: (id: string) => Player | undefined;
+  onClose: () => void;
+  onConfirm: (payload: {
+    teamAPlayedPlayerIds?: string[];
+    teamBPlayedPlayerIds?: string[];
+  }) => Promise<void> | void;
+}) {
+  const needsA = props.assignment.teamA.playerIds.length === 3;
+  const needsB = props.assignment.teamB.playerIds.length === 3;
+  const [teamAPlayed, setTeamAPlayed] = useState(() => getCourtPlayerIds(props.assignment.teamA));
+  const [teamBPlayed, setTeamBPlayed] = useState(() => getCourtPlayerIds(props.assignment.teamB));
+
+  return (
+    <Modal
+      title="Choose players"
+      onClose={props.onClose}
+      actions={
+        <Button
+          onClick={async () => {
+            await props.onConfirm({
+              teamAPlayedPlayerIds: needsA ? teamAPlayed : undefined,
+              teamBPlayedPlayerIds: needsB ? teamBPlayed : undefined,
+            });
+          }}
+          disabled={(needsA && teamAPlayed.length !== 2) || (needsB && teamBPlayed.length !== 2)}
+        >
+          Assign match
+        </Button>
+      }
+    >
+      <div className="space-y-4 text-sm">
+        <p className="text-white/60">Select the 2 players who will play before assigning this match to the court.</p>
+
+        {needsA && (
+          <div className="space-y-2">
+            <div className="font-semibold">Team A</div>
+            <PickTwo ids={props.assignment.teamA.playerIds} picked={teamAPlayed} setPicked={setTeamAPlayed} playerById={props.playerById} />
+          </div>
+        )}
+
+        {needsB && (
+          <div className="space-y-2">
+            <div className="font-semibold">Team B</div>
+            <PickTwo ids={props.assignment.teamB.playerIds} picked={teamBPlayed} setPicked={setTeamBPlayed} playerById={props.playerById} />
+          </div>
+        )}
+      </div>
+    </Modal>
   );
 }
 
 function FinishModal(props: {
-
   match: Match;
   teamA: Team;
   teamB: Team;
   playerById: (id: string) => Player | undefined;
   winnerTeamId: string;
-  setWinnerTeamId: (v: string) => void;
+  setWinnerTeamId: (value: string) => void;
   onClose: () => void;
   onConfirm: (payload: {
-    teamAPlayedPlayerIds?: string[];
-    teamBPlayedPlayerIds?: string[];
     scoreA?: number;
     scoreB?: number;
   }) => Promise<void> | void;
-
 }) {
-  const [winScore, setWinScore] = useState<string>("");
-  const [loseScore, setLoseScore] = useState<string>("");
-  const [aPlayed, setAPlayed] = useState<string[]>([]);
-  const [bPlayed, setBPlayed] = useState<string[]>([]);
-  const needsA = props.teamA.playerIds.length === 3;
-  const needsB = props.teamB.playerIds.length === 3;
-  const labelA = props.teamA.playerIds.map((id) => props.playerById(id)?.name ?? "?").join(" + ");
-  const labelB = props.teamB.playerIds.map((id) => props.playerById(id)?.name ?? "?").join(" + ");
+  const [winScore, setWinScore] = useState("");
+  const [loseScore, setLoseScore] = useState("");
 
+  const labelA = getCourtPlayerIds(props.teamA, props.match.teamAPlayedPlayerIds).map((id) => props.playerById(id)?.name ?? "?").join(" + ");
+  const labelB = getCourtPlayerIds(props.teamB, props.match.teamBPlayedPlayerIds).map((id) => props.playerById(id)?.name ?? "?").join(" + ");
 
   return (
     <Modal
@@ -738,178 +1038,115 @@ function FinishModal(props: {
       actions={
         <Button
           onClick={async () => {
-            try {
-              const payload: any = {};
+            const payload: {
+              scoreA?: number;
+              scoreB?: number;
+            } = {};
 
-              // 3-player: ต้องส่งคนที่ลงจริง
-              if (needsA) payload.teamAPlayedPlayerIds = aPlayed;
-              if (needsB) payload.teamBPlayedPlayerIds = bPlayed;
+            const winnerScore = winScore === "" ? Number.NaN : Number(winScore);
+            const loserScore = loseScore === "" ? Number.NaN : Number(loseScore);
 
-              // score: กรอกแบบ ผู้ชนะ/ผู้แพ้ แล้ว map เป็น scoreA/scoreB
-              const w = winScore === "" ? NaN : Number(winScore);
-              const l = loseScore === "" ? NaN : Number(loseScore);
-              if (Number.isFinite(w) && Number.isFinite(l)) {
-                if (props.winnerTeamId === props.teamA.id) {
-                  payload.scoreA = w;
-                  payload.scoreB = l;
-                } else {
-                  payload.scoreA = l;
-                  payload.scoreB = w;
-                }
+            if (Number.isFinite(winnerScore) && Number.isFinite(loserScore)) {
+              if (props.winnerTeamId === props.teamA.id) {
+                payload.scoreA = winnerScore;
+                payload.scoreB = loserScore;
+              } else {
+                payload.scoreA = loserScore;
+                payload.scoreB = winnerScore;
               }
-
-              await props.onConfirm(payload);
-            } catch (e) {
-              console.error(e);
             }
+
+            await props.onConfirm(payload);
           }}
-          disabled={
-            !props.winnerTeamId ||
-            (needsA && aPlayed.length !== 2) ||
-            (needsB && bPlayed.length !== 2)
-          }
+          disabled={!props.winnerTeamId}
         >
-          ยืนยันผู้ชนะ
+          Confirm winner
         </Button>
       }
-
     >
-      <div className="space-y-3 text-sm">
+      <div className="space-y-4 text-sm">
         <div className="font-semibold">Winner</div>
         <div className="grid grid-cols-2 gap-2">
           <button
-            className={`rounded-xl border px-3 py-3 font-semibold ${props.winnerTeamId === props.teamA.id ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-200"}`}
+            type="button"
+            className={`rounded-[20px] border px-3 py-3 font-semibold transition-transform active:scale-[0.98] ${props.winnerTeamId === props.teamA.id ? "border-[#37B64B] bg-[#37B64B] text-white" : "border-white/10 bg-white/[0.04] text-white"}`}
             onClick={() => props.setWinnerTeamId(props.teamA.id)}
           >
-            ผู้ชนะ: {labelA}
+            {labelA}
           </button>
-
           <button
-            className={`rounded-xl border px-3 py-3 font-semibold ${props.winnerTeamId === props.teamB.id ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-200"}`}
+            type="button"
+            className={`rounded-[20px] border px-3 py-3 font-semibold transition-transform active:scale-[0.98] ${props.winnerTeamId === props.teamB.id ? "border-[#37B64B] bg-[#37B64B] text-white" : "border-white/10 bg-white/[0.04] text-white"}`}
             onClick={() => props.setWinnerTeamId(props.teamB.id)}
           >
-            ผู้ชนะ: {labelB}
+            {labelB}
           </button>
         </div>
 
-        {needsA && (
-          <div className="space-y-2">
-            <div className="font-semibold">Team A (3-player): select the 2 who played</div>
-            <PickTwo ids={props.teamA.playerIds} picked={aPlayed} setPicked={setAPlayed} playerById={props.playerById} showPlayedCount />
+        <div className="space-y-2">
+          <div className="font-semibold">Score</div>
+          <div className="grid grid-cols-2 gap-2">
+            <input
+              className="rounded-[16px] border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-white outline-none placeholder:text-white/30"
+              type="number"
+              inputMode="numeric"
+              placeholder="Winner score"
+              value={winScore}
+              onChange={(event) => setWinScore(event.target.value)}
+            />
+            <input
+              className="rounded-[16px] border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-white outline-none placeholder:text-white/30"
+              type="number"
+              inputMode="numeric"
+              placeholder="Loser score"
+              value={loseScore}
+              onChange={(event) => setLoseScore(event.target.value)}
+            />
           </div>
-        )}
-        {needsB && (
-          <div className="space-y-2">
-            <div className="font-semibold">Team B (3-player): select the 2 who played</div>
-            <PickTwo ids={props.teamB.playerIds} picked={bPlayed} setPicked={setBPlayed} playerById={props.playerById} showPlayedCount />
-          </div>
-        )}
-      </div>
-      <div className="space-y-2">
-        <div className="font-semibold">สกอร์</div>
-        <div className="grid grid-cols-2 gap-2">
-          <input
-            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
-            type="number"
-            inputMode="numeric"
-            placeholder="คะแนนผู้ชนะ"
-            value={winScore}
-            onChange={(e) => setWinScore(e.target.value)}
-          />
-          <input
-            className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
-            type="number"
-            inputMode="numeric"
-            placeholder="คะแนนผู้แพ้"
-            value={loseScore}
-            onChange={(e) => setLoseScore(e.target.value)}
-          />
         </div>
       </div>
-
     </Modal>
-
   );
-
 }
 
 function PickTwo(props: {
   ids: string[];
   picked: string[];
-  setPicked: (v: string[]) => void;
+  setPicked: (value: string[]) => void;
   playerById: (id: string) => Player | undefined;
-  showPlayedCount?: boolean;
 }) {
   return (
     <div className="flex flex-wrap gap-2">
       {props.ids.map((id) => {
-        const on = props.picked.includes(id);
+        const active = props.picked.includes(id);
+        const player = props.playerById(id);
+
         return (
           <button
             key={id}
-            className={`rounded-full border px-3 py-2 text-xs font-semibold ${on ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-200"}`}
+            type="button"
+            className={`rounded-full border px-3 py-2 text-xs font-semibold transition-transform active:scale-[0.98] ${active ? "border-[#37B64B] bg-[#37B64B] text-white" : "border-white/10 bg-white/[0.04] text-white"}`}
             onClick={() => {
-              if (on) props.setPicked(props.picked.filter((x) => x !== id));
-              else {
-                if (props.picked.length >= 2) return;
-                props.setPicked([...props.picked, id]);
+              if (active) {
+                props.setPicked(props.picked.filter((value) => value !== id));
+                return;
               }
+              if (props.picked.length >= 2) return;
+              props.setPicked([...props.picked, id]);
             }}
           >
             <span className="inline-flex items-center gap-2">
-              {props.playerById(id)?.avatarDataUrl ? (
-                <img src={props.playerById(id)?.avatarDataUrl} alt={`avatar-${props.playerById(id)?.name ?? id}`} className="h-5 w-5 rounded-full object-cover border border-slate-200" />
-              ) : (
-                <span className="h-5 w-5 rounded-full border border-dashed border-slate-300 bg-slate-50" />
-              )}
-              <span>
-                {props.playerById(id)?.name ?? "?"}
-                {props.showPlayedCount ? ` (${props.playerById(id)?.stats.played ?? 0})` : ""}
-              </span>
+              <AvatarBadge
+                name={player?.name ?? "?"}
+                imageUrl={player?.avatarDataUrl}
+                sizeClassName="h-5 w-5"
+                textClassName="text-[10px]"
+              />
+              <span>{player?.name ?? "Unknown"}</span>
             </span>
           </button>
         );
       })}
     </div>
-  );
-}
-
-function formatScoreByTeam(r: ResultRow) {
-  if (r.scoreA == null || r.scoreB == null) return "No score";
-  return `Team A ${r.scoreA} - Team B ${r.scoreB}`;
-}
-
-function PlayerCountChip(props: { count: number }) {
-  const even = props.count % 2 === 0;
-  return (
-    <span className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold ${even ? "bg-slate-900 text-white" : "border-2 border-slate-700 text-slate-700"}`}>
-      {props.count}
-    </span>
-  );
-}
-
-function StatsTable(props: { players: Player[]; editable?: boolean; onReset?: () => void | Promise<void>; cardClassName?: string }) {
-  const [sortBy, setSortBy] = useState<"wins" | "losses" | "played">("wins");
-  const rows = [...props.players].sort((a, b) => b.stats[sortBy] - a.stats[sortBy]);
-  return (
-    <Card className={props.cardClassName ?? ""}>
-      <CardHeader
-        title="Stats Table"
-        right={props.editable ? <button className="text-xs font-semibold text-rose-700" onClick={() => props.onReset?.()}>Reset table</button> : undefined}
-      />
-      <CardBody className="flex h-full flex-col gap-2">
-        <div className="flex gap-2">
-          <button className={`rounded-full border px-2 py-1 text-xs ${sortBy === "wins" ? "bg-slate-900 text-white" : ""}`} onClick={() => setSortBy("wins")}>Wins</button>
-          <button className={`rounded-full border px-2 py-1 text-xs ${sortBy === "losses" ? "bg-slate-900 text-white" : ""}`} onClick={() => setSortBy("losses")}>Losses</button>
-          <button className={`rounded-full border px-2 py-1 text-xs ${sortBy === "played" ? "bg-slate-900 text-white" : ""}`} onClick={() => setSortBy("played")}>Played</button>
-        </div>
-        <div className="max-h-[360px] overflow-y-auto rounded-xl border border-slate-200">
-          <table className="w-full text-xs">
-            <thead className="bg-slate-100"><tr><th className="p-2 text-left">Player</th><th className="p-2">W</th><th className="p-2">L</th><th className="p-2">P</th></tr></thead>
-            <tbody>{rows.map((p) => <tr key={p.id} className="border-t"><td className="p-2">{p.name}</td><td className="p-2 text-center">{p.stats.wins}</td><td className="p-2 text-center">{p.stats.losses}</td><td className="p-2 text-center">{p.stats.played}</td></tr>)}</tbody>
-          </table>
-        </div>
-      </CardBody>
-    </Card>
   );
 }

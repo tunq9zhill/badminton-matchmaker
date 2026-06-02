@@ -26,6 +26,7 @@ export type Session = {
 export type Player = {
   id: string;
   name: string;
+  createdAt?: number;
   stats: { played: number; wins: number; losses: number };
   playHistory?: number[]; // เก็บ timestamp (endedAt) ทุกครั้งที่ได้เล่น
   avatarDataUrl?: string; // optional profile image (compressed data URL)

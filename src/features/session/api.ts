@@ -57,7 +57,11 @@ export async function sessionExists(sessionId: string) {
 
 export function subscribePlayers(sessionId: string, cb: (rows: Player[]) => void) {
   return onSnapshot(collection(db, COL.sessions, sessionId, COL.players), (snap) => {
-    cb(snap.docs.map((d) => d.data() as Player));
+    cb(
+      snap.docs
+        .map((d) => d.data() as Player)
+        .sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0) || a.name.localeCompare(b.name)),
+    );
   });
 }
 
@@ -104,9 +108,10 @@ export async function assertHost(sessionId: string) {
 export async function upsertPlayers(sessionId: string, names: string[]) {
   await assertHost(sessionId);
   const b = writeBatch(db);
-  for (const name of names) {
+  const now = Date.now();
+  for (const [index, name] of names.entries()) {
     const id = nanoid(8);
-    const p: Player = { id, name: name.trim(), stats: { played: 0, wins: 0, losses: 0 } };
+    const p: Player = { id, name: name.trim(), createdAt: now + index, stats: { played: 0, wins: 0, losses: 0 } };
     b.set(doc(db, COL.sessions, sessionId, COL.players, id), p);
   }
   await b.commit();
@@ -116,11 +121,13 @@ export async function addPlayers(sessionId: string, players: Array<{ name: strin
   await assertHost(sessionId);
   const b = writeBatch(db);
   const created: Player[] = [];
-  for (const player of players) {
+  const now = Date.now();
+  for (const [index, player] of players.entries()) {
     const id = nanoid(8);
     const next: Player = {
       id,
       name: player.name.trim(),
+      createdAt: now + index,
       stats: { played: 0, wins: 0, losses: 0 },
     };
     if (player.avatarDataUrl) next.avatarDataUrl = player.avatarDataUrl;
@@ -137,6 +144,7 @@ export async function addPlayer(sessionId: string, payload: { name: string; avat
   const p: Player = {
     id,
     name: payload.name.trim(),
+    createdAt: Date.now(),
     stats: { played: 0, wins: 0, losses: 0 },
   };
   if (payload.avatarDataUrl) p.avatarDataUrl = payload.avatarDataUrl;

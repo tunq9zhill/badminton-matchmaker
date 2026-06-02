@@ -5,7 +5,7 @@ import { addPlayers, assertHost, createSession, sessionExists } from "../feature
 import { useAppStore } from "../app/store";
 import { nanoid } from "nanoid";
 import { Modal } from "../ui/Modal";
-import { readHostSession, readRecentPlayers, saveHostSession, type RecentPlayer } from "../app/localCache";
+import { clearRecentPlayers, readHostSession, readRecentPlayers, saveHostSession, saveRecentPlayers, type RecentPlayer } from "../app/localCache";
 import courtMateLogo from "../assets/CourtMate-logo.png";
 import backgroundImage from "../assets/Background.jpg";
 import { AvatarBadge } from "../ui/AvatarBadge";
@@ -70,12 +70,16 @@ export function Landing() {
   const [joining, setJoining] = useState(false);
   const [creatingSession, setCreatingSession] = useState(false);
   const [scanOpen, setScanOpen] = useState(false);
+  const [avatarEditorPlayerId, setAvatarEditorPlayerId] = useState<string | null>(null);
   const [scanError, setScanError] = useState("");
   const [cameraReady, setCameraReady] = useState(false);
   const [lastHostSession, setLastHostSession] = useState(() => readHostSession());
-  const [recentPlayers] = useState<RecentPlayer[]>(() => readRecentPlayers());
+  const [recentPlayers, setRecentPlayers] = useState<RecentPlayer[]>(() => readRecentPlayers());
   const setToast = useAppStore((s) => s.setToast);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const recentDragRef = useRef({ active: false, dragging: false, suppressClick: false, startX: 0, scrollLeft: 0 });
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const otpRefs = useRef<Array<HTMLInputElement | null>>([]);
   const scanLockRef = useRef(false);
 
@@ -87,6 +91,11 @@ export function Landing() {
     const draftNameSet = new Set(draftPlayers.map((player) => player.name.toLowerCase()));
     return recentPlayers.filter((player) => !draftNameSet.has(player.name.toLowerCase()));
   }, [draftPlayers, recentPlayers]);
+
+  const avatarEditorPlayer = useMemo(
+    () => draftPlayers.find((player) => player.id === avatarEditorPlayerId) ?? null,
+    [avatarEditorPlayerId, draftPlayers],
+  );
 
   const codeValue = viewerCode.join("");
   const courtNumber = Number(courtCount);
@@ -104,6 +113,53 @@ export function Landing() {
 
     setDraftPlayers((prev) => [...prev, { id: nanoid(8), name: trimmedName, avatarDataUrl: payload.avatarDataUrl }]);
     return true;
+  };
+
+  const storeRecentPlayers = (playersToStore: Array<{ name: string; avatarDataUrl?: string }>) => {
+    const now = Date.now();
+    const merged = new Map<string, RecentPlayer>();
+
+    for (const player of playersToStore) {
+      const name = player.name.trim();
+      if (!name) continue;
+      merged.set(name.toLowerCase(), { name, avatarDataUrl: player.avatarDataUrl, usedAt: now });
+    }
+
+    for (const player of recentPlayers) {
+      const key = player.name.toLowerCase();
+      if (!merged.has(key)) merged.set(key, player);
+    }
+
+    const next = Array.from(merged.values()).slice(0, 12);
+    setRecentPlayers(next);
+    saveRecentPlayers(next);
+  };
+
+  const clearRecentAdd = () => {
+    clearRecentPlayers();
+    setRecentPlayers([]);
+  };
+
+  const updateDraftPlayerAvatar = (playerId: string, avatarDataUrl?: string) => {
+    setDraftPlayers((prev) =>
+      prev.map((player) =>
+        player.id === playerId
+          ? { ...player, avatarDataUrl }
+          : player,
+      ),
+    );
+  };
+
+  const handleAvatarFile = async (file?: File | null) => {
+    if (!file || !avatarEditorPlayerId) return;
+
+    try {
+      const avatarDataUrl = await fileToAvatarDataUrl(file);
+      updateDraftPlayerAvatar(avatarEditorPlayerId, avatarDataUrl);
+      setAvatarEditorPlayerId(null);
+    } catch (error: any) {
+      setToast({ id: nanoid(), kind: "error", message: error?.message ?? "Failed to update profile image" });
+    }
   };
 
   const submitPlayerName = () => {
@@ -144,6 +200,7 @@ export function Landing() {
         setToast({ id: nanoid(), kind: "info", message: warnings[0] });
       }
       await setTeamsAndQueue(sessionId, teams);
+      storeRecentPlayers(nextPlayers);
       saveHostSession(sessionId, secret);
       setLastHostSession(readHostSession());
       history.pushState({}, "", `/h/${sessionId}?secret=${encodeURIComponent(secret)}`);
@@ -390,7 +447,7 @@ export function Landing() {
           </button>
         )}
       >
-        <div className="landing-scroll-pane landing-shadow-safe flex h-full flex-col pb-[calc(132px+max(16px,env(safe-area-inset-bottom)))] pt-[31px]">
+        <div className="landing-shadow-safe flex h-full flex-col overflow-hidden pt-[31px]">
           <section className="soft-fade-up max-w-[279px]" style={fadeInStyle(70)}>
             <h1 className="text-[48px] font-bold leading-[60px] tracking-[-0.03em] text-white">Add courts</h1>
             <p className="mt-0 text-[16px] font-normal leading-5 text-white">
@@ -451,7 +508,7 @@ export function Landing() {
             })}
           </div>
 
-          <div className="mt-auto min-h-[24px]" aria-hidden="true" />
+          <div className="mt-auto min-h-[calc(132px+max(16px,env(safe-area-inset-bottom)))]" aria-hidden="true" />
         </div>
       </ScreenShell>
     );
@@ -505,17 +562,66 @@ export function Landing() {
           </form>
 
           <section className="soft-fade-up mt-6" style={fadeInStyle(210)}>
-            <h2 className="text-[18px] font-medium leading-[23px] text-white">Recent add</h2>
-            <div className="mt-4 overflow-x-auto pb-1">
+            <div className="flex items-center justify-between">
+              <h2 className="text-[18px] font-medium leading-[23px] text-white">Recent add</h2>
+              <button
+                type="button"
+                onClick={clearRecentAdd}
+                className="text-[16px] font-medium leading-5 text-[#37B64B] transition-opacity active:opacity-80"
+              >
+                Clear all
+              </button>
+            </div>
+            <div
+              className="mt-4 w-[calc(100vw-16px)] cursor-grab overflow-x-auto pb-1 pr-4 active:cursor-grabbing"
+              onPointerDown={(event) => {
+                recentDragRef.current = {
+                  active: true,
+                  dragging: false,
+                  suppressClick: false,
+                  startX: event.clientX,
+                  scrollLeft: event.currentTarget.scrollLeft,
+                };
+              }}
+              onPointerMove={(event) => {
+                if (!recentDragRef.current.active) return;
+                const delta = event.clientX - recentDragRef.current.startX;
+                if (Math.abs(delta) > 4) {
+                  recentDragRef.current.dragging = true;
+                  recentDragRef.current.suppressClick = true;
+                  if (!event.currentTarget.hasPointerCapture(event.pointerId)) {
+                    event.currentTarget.setPointerCapture(event.pointerId);
+                  }
+                  event.preventDefault();
+                }
+                event.currentTarget.scrollLeft = recentDragRef.current.scrollLeft - delta;
+              }}
+              onPointerUp={(event) => {
+                recentDragRef.current.active = false;
+                if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                  event.currentTarget.releasePointerCapture(event.pointerId);
+                }
+                window.setTimeout(() => {
+                  recentDragRef.current.dragging = false;
+                  recentDragRef.current.suppressClick = false;
+                }, 0);
+              }}
+              onPointerCancel={() => {
+                recentDragRef.current.active = false;
+                recentDragRef.current.dragging = false;
+                recentDragRef.current.suppressClick = false;
+              }}
+            >
               <div className="flex min-w-max gap-2 pr-4">
                 {visibleRecentPlayers.map((player) => (
                   <button
                     key={player.name}
                     type="button"
                     onClick={() => {
+                      if (recentDragRef.current.suppressClick) return;
                       addDraftPlayer({ name: player.name, avatarDataUrl: player.avatarDataUrl });
                     }}
-                    className="flex h-[62px] items-center gap-4 rounded-[20px] border border-white/5 bg-white/5 px-4 text-left text-white transition-transform active:scale-[0.98]"
+                    className="flex h-[62px] flex-none items-center gap-4 rounded-[20px] border border-white/5 bg-white/5 px-4 text-left text-white transition-transform active:scale-[0.98]"
                   >
                     <AvatarBadge
                       name={player.name}
@@ -523,7 +629,7 @@ export function Landing() {
                       sizeClassName="h-10 w-10"
                       textClassName="text-[16px]"
                     />
-                    <span className="text-[16px] font-medium leading-5">{player.name}</span>
+                    <span className="whitespace-nowrap text-[16px] font-medium leading-5">{player.name}</span>
                   </button>
                 ))}
                 {visibleRecentPlayers.length === 0 && (
@@ -553,15 +659,22 @@ export function Landing() {
                   {draftPlayers.map((player) => (
                     <div
                       key={player.id}
-                      className="flex min-h-[62px] items-center justify-between gap-3 rounded-[20px] border border-white/5 bg-white/5 px-4"
+                      className="flex h-[60px] items-center justify-between gap-3 rounded-[20px] border border-white/5 bg-white/5 px-4"
                     >
                       <div className="flex min-w-0 items-center gap-4">
-                        <AvatarBadge
-                          name={player.name}
-                          imageUrl={player.avatarDataUrl}
-                          sizeClassName="h-10 w-10"
-                          textClassName="text-[16px]"
-                        />
+                        <button
+                          type="button"
+                          aria-label={`Edit profile image for ${player.name}`}
+                          onClick={() => setAvatarEditorPlayerId(player.id)}
+                          className="flex-none rounded-full transition-transform active:scale-[0.95]"
+                        >
+                          <AvatarBadge
+                            name={player.name}
+                            imageUrl={player.avatarDataUrl}
+                            sizeClassName="h-10 w-10"
+                            textClassName="text-[16px]"
+                          />
+                        </button>
                         <span className="truncate text-[16px] font-medium leading-5 text-white">{player.name}</span>
                       </div>
 
@@ -584,6 +697,77 @@ export function Landing() {
               </div>
             </div>
           </section>
+
+          {avatarEditorPlayer && (
+            <>
+              <input
+                ref={cameraInputRef}
+                className="hidden"
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onChange={(event) => {
+                  void handleAvatarFile(event.currentTarget.files?.[0]);
+                  event.currentTarget.value = "";
+                }}
+              />
+              <input
+                ref={uploadInputRef}
+                className="hidden"
+                type="file"
+                accept="image/*"
+                onChange={(event) => {
+                  void handleAvatarFile(event.currentTarget.files?.[0]);
+                  event.currentTarget.value = "";
+                }}
+              />
+              <Modal title="Profile image" onClose={() => setAvatarEditorPlayerId(null)}>
+                <div className="space-y-4">
+                  <div className="flex items-center gap-3 rounded-[20px] border border-white/5 bg-white/5 p-4">
+                    <AvatarBadge
+                      name={avatarEditorPlayer.name}
+                      imageUrl={avatarEditorPlayer.avatarDataUrl}
+                      sizeClassName="h-12 w-12"
+                      textClassName="text-[18px]"
+                    />
+                    <div className="min-w-0">
+                      <div className="truncate text-[16px] font-medium leading-5 text-white">{avatarEditorPlayer.name}</div>
+                      <div className="mt-1 text-[13px] leading-[17px] text-white/50">Choose a profile image.</div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => cameraInputRef.current?.click()}
+                      className="h-[52px] rounded-[20px] border border-white/10 bg-white/[0.04] px-4 text-[16px] font-medium text-white transition-transform active:scale-[0.98]"
+                    >
+                      Take photo
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => uploadInputRef.current?.click()}
+                      className="h-[52px] rounded-[20px] border border-white/10 bg-white/[0.04] px-4 text-[16px] font-medium text-white transition-transform active:scale-[0.98]"
+                    >
+                      Upload photo
+                    </button>
+                    {avatarEditorPlayer.avatarDataUrl && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          updateDraftPlayerAvatar(avatarEditorPlayer.id);
+                          setAvatarEditorPlayerId(null);
+                        }}
+                        className="h-[52px] rounded-[20px] bg-[#7A1F24] px-4 text-[16px] font-medium text-white transition-transform active:scale-[0.98]"
+                      >
+                        Remove profile image
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </Modal>
+            </>
+          )}
         </div>
       </ScreenShell>
     );
@@ -809,6 +993,37 @@ function ArrowRightIcon() {
   );
 }
 
+async function fileToAvatarDataUrl(file: File) {
+  if (!file.type.startsWith("image/")) throw new Error("Please choose an image file.");
+
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error("Failed to read image file."));
+    reader.readAsDataURL(file);
+  });
+
+  const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const next = new Image();
+    next.onload = () => resolve(next);
+    next.onerror = () => reject(new Error("Failed to load image file."));
+    next.src = dataUrl;
+  });
+
+  const maxEdge = 512;
+  const scale = Math.min(1, maxEdge / Math.max(image.width, image.height));
+  const width = Math.max(1, Math.round(image.width * scale));
+  const height = Math.max(1, Math.round(image.height * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Failed to process image file.");
+
+  context.drawImage(image, 0, 0, width, height);
+  return canvas.toDataURL("image/jpeg", 0.82);
+}
+
 function extractCodeFromRaw(raw: string) {
   const direct = raw.toUpperCase().match(/^[A-Z0-9]{6}$/)?.[0];
   if (direct) return direct;
@@ -836,9 +1051,7 @@ function ScreenShell(props: { children: ReactNode; header: ReactNode; background
         <div className="min-h-0 flex-1">{props.children}</div>
         {props.bottomSlot && (
           <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-[#0D2318] via-[#0D2318] to-[#0D2318]/0 px-4 pt-8 pb-[max(16px,env(safe-area-inset-bottom))]">
-            <div className="landing-shadow-safe">
-              {props.bottomSlot}
-            </div>
+            {props.bottomSlot}
           </div>
         )}
       </div>
