@@ -10,7 +10,7 @@ export function Button(props: {
 }) {
   const v = props.variant ?? "primary";
   const base =
-    "w-full select-none rounded-[20px] px-4 py-3 text-base font-semibold shadow-sm transition-all duration-200 ease-[cubic-bezier(0.38,1.37,0.33,1)] active:scale-[0.99] disabled:opacity-50 disabled:active:scale-100";
+    "w-full select-none rounded-[20px] px-4 py-3 text-base font-semibold shadow-sm transition-all duration-[600ms] ease-[cubic-bezier(0.265,1.296,0,0.985)] active:scale-[0.99] disabled:opacity-50 disabled:active:scale-100";
   const styles =
     v === "primary"
       ? "bg-[#37B64B] text-white shadow-[0_0_24px_rgba(55,182,75,0.2)]"

@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-type Toast = { id: string; message: string; kind: "info" | "error" | "success" };
+type Toast = { id: string; message: string; kind: "info" | "error" | "success"; title?: string };
 
 type AppState = {
   toast?: Toast;

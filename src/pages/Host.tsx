@@ -429,7 +429,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
               {players.map((player) => (
                 <div
                   key={player.id}
-                  className="flex h-[60px] w-[158px] flex-none items-center gap-3 rounded-[20px] border border-white/5 bg-white/[0.05] px-4"
+                  className="flex h-[60px] w-[158px] flex-none items-center gap-3 rounded-[16px] border border-white/5 bg-white/[0.05] px-4"
                 >
                   <AvatarBadge
                     name={player.name}
@@ -447,7 +447,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
               ))}
 
               {players.length === 0 && (
-                <div className="flex h-[76px] w-[250px] flex-none items-center justify-center rounded-[20px] border border-dashed border-white/10 px-4 text-center text-[14px] text-white/45">
+                <div className="flex h-[76px] w-[250px] flex-none items-center justify-center rounded-[16px] border border-dashed border-white/10 px-4 text-center text-[14px] text-white/45">
                   No players in this session yet.
                 </div>
               )}
@@ -753,7 +753,7 @@ function CourtMatchCard(props: {
   return (
     <article
       data-court-card
-      className="relative h-[257px] w-[283px] flex-none snap-start overflow-hidden rounded-[10px] border border-white/5 bg-black/5"
+      className="relative h-[257px] w-[283px] flex-none snap-start overflow-hidden rounded-[16px] border border-white/5 bg-black/5"
     >
       <div className="absolute left-0 right-0 top-4 flex h-5 items-center justify-center gap-2.5">
         <span className={`h-2 w-2 rounded-full ${hasMatch ? "bg-[#37B64B]" : "bg-white/25"}`} />
@@ -780,7 +780,7 @@ function CourtMatchCard(props: {
         </>
       ) : (
         <>
-          <div className="absolute left-4 top-[53px] h-[134px] w-[251px] rounded-[10px] border border-dashed border-white/10 px-4 py-4">
+          <div className="absolute left-4 top-[53px] h-[134px] w-[251px] rounded-[16px] border border-dashed border-white/10 px-4 py-4">
             <div className="text-[16px] font-medium leading-5 text-white">
               {props.coverageCompleted ? "Coverage completed" : "Court is ready"}
             </div>
@@ -817,7 +817,7 @@ function MatchCardButton(props: {
       type="button"
       disabled={props.disabled}
       onClick={props.onClick}
-      className={`flex h-full min-w-0 flex-1 items-center justify-center rounded-lg border px-3 text-[16px] font-medium leading-5 transition-transform active:scale-[0.98] disabled:cursor-not-allowed ${toneClass}`}
+      className={`flex h-full min-w-0 flex-1 items-center justify-center rounded-[16px] border px-3 text-[16px] font-medium leading-5 transition-transform active:scale-[0.98] disabled:cursor-not-allowed ${toneClass}`}
     >
       {props.children}
     </button>
@@ -886,7 +886,7 @@ function UpcomingMatchesPanel(props: {
         ))}
 
         {props.rows.length === 0 && (
-          <div className="flex h-20 w-full items-center justify-center rounded-[10px] border border-dashed border-white/10 bg-white/[0.05] px-4 text-center text-[14px] font-medium leading-[18px] text-white/45">
+          <div className="flex h-20 w-full items-center justify-center rounded-[16px] border border-dashed border-white/10 bg-white/[0.05] px-4 text-center text-[14px] font-medium leading-[18px] text-white/45">
             {props.coverageCompleted ? "Queue is clear. Rebuild pairing when you want another round." : "No upcoming matches yet."}
           </div>
         )}
@@ -899,7 +899,7 @@ function UpcomingMatchRow(props: { row: QueuePreviewRow; playerById: (id: string
   if (!props.row.teamA) return null;
 
   return (
-    <article className="flex min-h-20 w-full items-center justify-between gap-2 rounded-[10px] border border-white/5 bg-white/[0.05] px-3 py-3.5">
+    <article className="flex min-h-20 w-full items-center justify-between gap-2 rounded-[16px] border border-white/5 bg-white/[0.05] px-3 py-3.5">
       <UpcomingTeam team={props.row.teamA} playerById={props.playerById} />
 
       {props.row.teamB ? (
