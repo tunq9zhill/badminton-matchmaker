@@ -1,7 +1,7 @@
 import { customAlphabet, nanoid } from "nanoid";
 import {
   collection, doc, setDoc, writeBatch,
-  onSnapshot, query, orderBy, limit, getDoc, runTransaction, updateDoc
+  onSnapshot, query, orderBy, limit, getDoc, getDocs, runTransaction, updateDoc
 } from "firebase/firestore";
 import { db, ensureAnonAuth } from "../../app/firebase";
 import { sha256Base64 } from "../../app/hash";
@@ -50,6 +50,32 @@ export function subscribeSession(sessionId: string, cb: (s: Session | null) => v
   return onSnapshot(doc(db, COL.sessions, sessionId), (snap) => {
     cb(snap.exists() ? (snap.data() as Session) : null);
   });
+}
+
+export async function readSessionState(sessionId: string) {
+  const user = await ensureAnonAuth();
+  const sSnap = await getDoc(doc(db, COL.sessions, sessionId));
+  if (!sSnap.exists()) throw new Error("Session not found");
+
+  const session = sSnap.data() as Session;
+  if (session.hostUid !== user.uid) throw new Error("Not host on this device");
+
+  const [playersSnap, teamsSnap, courtsSnap, matchesSnap] = await Promise.all([
+    getDocs(collection(db, COL.sessions, sessionId, COL.players)),
+    getDocs(collection(db, COL.sessions, sessionId, COL.teams)),
+    getDocs(collection(db, COL.sessions, sessionId, COL.courts)),
+    getDocs(collection(db, COL.sessions, sessionId, COL.matches)),
+  ]);
+
+  return {
+    session,
+    players: playersSnap.docs
+      .map((d) => d.data() as Player)
+      .sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0) || a.name.localeCompare(b.name)),
+    teams: teamsSnap.docs.map((d) => d.data() as Team),
+    courts: courtsSnap.docs.map((d) => d.data() as Court).sort((a, b) => Number(a.id) - Number(b.id)),
+    matches: matchesSnap.docs.map((d) => d.data() as Match),
+  };
 }
 
 export async function sessionExists(sessionId: string) {
