@@ -5,6 +5,7 @@ export const COL = {
   courts: "courts",
   matches: "matches",
   results: "results",
+  recovery: "recovery",
 } as const;
 
 export type ResultRow = {

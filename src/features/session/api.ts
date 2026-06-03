@@ -1,13 +1,16 @@
 import { customAlphabet, nanoid } from "nanoid";
 import {
   collection, doc, setDoc, writeBatch,
-  onSnapshot, query, orderBy, limit, getDoc, getDocs, runTransaction, updateDoc
+  onSnapshot, query, orderBy, limit, getDoc, runTransaction, updateDoc
 } from "firebase/firestore";
 import { db, ensureAnonAuth } from "../../app/firebase";
 import { sha256Base64 } from "../../app/hash";
 import type { Session, Player, Team, Court, Match } from "../../app/types";
 import { COL, type ResultRow } from "./schema";
 import { deleteDoc } from "firebase/firestore";
+import { commitGameState } from "./recovery";
+
+export { readSessionState } from "./recovery";
 
 
 export async function createSession(params: { courtCount: number; oddMode: "three_player_rotation" | "none" }) {
@@ -43,39 +46,13 @@ export async function createSession(params: { courtCount: number; oddMode: "thre
   }
   await b.commit();
 
-  return { sessionId, secret };
+  return { sessionId, secret, session };
 }
 
 export function subscribeSession(sessionId: string, cb: (s: Session | null) => void) {
   return onSnapshot(doc(db, COL.sessions, sessionId), (snap) => {
     cb(snap.exists() ? (snap.data() as Session) : null);
   });
-}
-
-export async function readSessionState(sessionId: string) {
-  const user = await ensureAnonAuth();
-  const sSnap = await getDoc(doc(db, COL.sessions, sessionId));
-  if (!sSnap.exists()) throw new Error("Session not found");
-
-  const session = sSnap.data() as Session;
-  if (session.hostUid !== user.uid) throw new Error("Not host on this device");
-
-  const [playersSnap, teamsSnap, courtsSnap, matchesSnap] = await Promise.all([
-    getDocs(collection(db, COL.sessions, sessionId, COL.players)),
-    getDocs(collection(db, COL.sessions, sessionId, COL.teams)),
-    getDocs(collection(db, COL.sessions, sessionId, COL.courts)),
-    getDocs(collection(db, COL.sessions, sessionId, COL.matches)),
-  ]);
-
-  return {
-    session,
-    players: playersSnap.docs
-      .map((d) => d.data() as Player)
-      .sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0) || a.name.localeCompare(b.name)),
-    teams: teamsSnap.docs.map((d) => d.data() as Team),
-    courts: courtsSnap.docs.map((d) => d.data() as Court).sort((a, b) => Number(a.id) - Number(b.id)),
-    matches: matchesSnap.docs.map((d) => d.data() as Match),
-  };
 }
 
 export async function sessionExists(sessionId: string) {
@@ -134,19 +111,21 @@ export async function assertHost(sessionId: string) {
 }
 
 export async function upsertPlayers(sessionId: string, names: string[]) {
-  await assertHost(sessionId);
-  const b = writeBatch(db);
-  const now = Date.now();
-  for (const [index, name] of names.entries()) {
-    const id = nanoid(8);
-    const p: Player = { id, name: name.trim(), createdAt: now + index, stats: { played: 0, wins: 0, losses: 0 } };
-    b.set(doc(db, COL.sessions, sessionId, COL.players, id), p);
-  }
-  await b.commit();
+  await commitGameState(sessionId, "upsert-players", async () => {
+    await assertHost(sessionId);
+    const b = writeBatch(db);
+    const now = Date.now();
+    for (const [index, name] of names.entries()) {
+      const id = nanoid(8);
+      const p: Player = { id, name: name.trim(), createdAt: now + index, stats: { played: 0, wins: 0, losses: 0 } };
+      b.set(doc(db, COL.sessions, sessionId, COL.players, id), p);
+    }
+    await b.commit();
+  });
 }
 
 export async function addPlayers(sessionId: string, players: Array<{ name: string; avatarDataUrl?: string }>) {
-  await assertHost(sessionId);
+  await ensureAnonAuth();
   const b = writeBatch(db);
   const created: Player[] = [];
   const now = Date.now();
@@ -167,16 +146,18 @@ export async function addPlayers(sessionId: string, players: Array<{ name: strin
 }
 
 export async function addPlayer(sessionId: string, payload: { name: string; avatarDataUrl?: string }) {
-  await assertHost(sessionId);
   const id = nanoid(8);
-  const p: Player = {
-    id,
-    name: payload.name.trim(),
-    createdAt: Date.now(),
-    stats: { played: 0, wins: 0, losses: 0 },
-  };
-  if (payload.avatarDataUrl) p.avatarDataUrl = payload.avatarDataUrl;
-  await setDoc(doc(db, COL.sessions, sessionId, COL.players, id), p);
+  await commitGameState(sessionId, "add-player", async () => {
+    await assertHost(sessionId);
+    const p: Player = {
+      id,
+      name: payload.name.trim(),
+      createdAt: Date.now(),
+      stats: { played: 0, wins: 0, losses: 0 },
+    };
+    if (payload.avatarDataUrl) p.avatarDataUrl = payload.avatarDataUrl;
+    await setDoc(doc(db, COL.sessions, sessionId, COL.players, id), p);
+  });
   return id;
 }
 
@@ -222,13 +203,17 @@ export async function updateSessionCore(sessionId: string, patch: Partial<Sessio
 }
 
 export async function updatePlayerAvatar(sessionId: string, playerId: string, avatarDataUrl?: string) {
-  await assertHost(sessionId);
-  await updateDoc(doc(db, COL.sessions, sessionId, COL.players, playerId), {
-    avatarDataUrl: avatarDataUrl ?? null,
+  await commitGameState(sessionId, "update-player-avatar", async () => {
+    await assertHost(sessionId);
+    await updateDoc(doc(db, COL.sessions, sessionId, COL.players, playerId), {
+      avatarDataUrl: avatarDataUrl ?? null,
+    });
   });
 }
 
 export async function deletePlayer(sessionId: string, playerId: string) {
-  await assertHost(sessionId);
-  await deleteDoc(doc(db, COL.sessions, sessionId, COL.players, playerId));
+  await commitGameState(sessionId, "delete-player", async () => {
+    await assertHost(sessionId);
+    await deleteDoc(doc(db, COL.sessions, sessionId, COL.players, playerId));
+  });
 }

@@ -1,7 +1,7 @@
 import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Card, CardBody, CardHeader } from "../ui/Card";
 import { Button } from "../ui/Button";
-import { addPlayers, assertHost, createSession, sessionExists } from "../features/session/api";
+import { addPlayers, createSession, sessionExists } from "../features/session/api";
 import { useAppStore } from "../app/store";
 import { nanoid } from "nanoid";
 import { Modal } from "../ui/Modal";
@@ -10,7 +10,7 @@ import courtMateLogo from "../assets/CourtMate-logo.png";
 import backgroundImage from "../assets/Background.jpg";
 import { AvatarBadge } from "../ui/AvatarBadge";
 import { buildInitialTeams } from "../engine/pairing";
-import { setTeamsAndQueue, startOnce } from "../features/session/mutations";
+import { setTeamsAndQueue } from "../features/session/mutations";
 
 type LandingMode = "home" | "create" | "players" | "viewer";
 type DraftPlayer = { id: string; name: string; avatarDataUrl?: string };
@@ -188,18 +188,16 @@ export function Landing() {
 
     try {
       setCreatingSession(true);
-      const { sessionId, secret } = await createSession({
+      const { sessionId, secret, session } = await createSession({
         courtCount: Number(courtCount),
         oddMode,
       });
       const createdPlayers = await addPlayers(sessionId, nextPlayers);
-      const { session } = await assertHost(sessionId);
-      await startOnce(sessionId);
       const { teams, warnings } = buildInitialTeams(session, createdPlayers);
       if (warnings.length) {
         setToast({ id: nanoid(), kind: "info", message: warnings[0] });
       }
-      await setTeamsAndQueue(sessionId, teams);
+      await setTeamsAndQueue(sessionId, teams, session);
       storeRecentPlayers(nextPlayers);
       saveHostSession(sessionId, secret);
       setLastHostSession(readHostSession());
