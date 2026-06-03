@@ -522,11 +522,20 @@ export function Landing() {
           <button
             type="button"
             disabled={!canCreateMatches}
+            aria-busy={creatingSession}
             onClick={() => void createMatchSession()}
-            className="pointer-events-auto flex h-[100px] w-full items-center justify-center gap-3 rounded-[36px] bg-[#37B64B] px-6 text-[24px] font-medium leading-[30px] text-white shadow-[0_0_42px_rgba(55,182,75,0.26)] transition-transform active:scale-[0.99] disabled:opacity-50"
+            className={`pointer-events-auto flex h-[100px] w-full items-center justify-center gap-3 rounded-[36px] bg-[#37B64B] px-6 text-[24px] font-medium leading-[30px] text-white shadow-[0_0_42px_rgba(55,182,75,0.26)] transition-transform active:scale-[0.99] ${
+              creatingSession ? "disabled:opacity-90" : "disabled:opacity-50"
+            }`}
           >
-            {creatingSession ? "Creating..." : "Create matches"}
-            <ArrowRightIcon />
+            {creatingSession ? (
+              <CreatingButtonContent />
+            ) : (
+              <>
+                Create matches
+                <ArrowRightIcon />
+              </>
+            )}
           </button>
         )}
       >
@@ -1050,7 +1059,7 @@ function ScreenShell(props: { children: ReactNode; header: ReactNode; background
         <div className="z-20 shrink-0 pt-[max(16px,env(safe-area-inset-top))]">{props.header}</div>
         <div className="min-h-0 flex-1">{props.children}</div>
         {props.bottomSlot && (
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-[#0D2318] via-[#0D2318] to-[#0D2318]/0 px-4 pt-8 pb-[max(16px,env(safe-area-inset-bottom))]">
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-[#0D2318] via-[#0D2318] to-[#0D2318]/0 px-4 pt-8 pb-[max(8px,env(safe-area-inset-bottom))]">
             {props.bottomSlot}
           </div>
         )}
@@ -1085,5 +1094,24 @@ function HeroBrandHeader(props: { style?: CSSProperties }) {
       <img src={courtMateLogo} alt="CourtMate" className="h-14 w-14 object-contain" />
       <div className="text-[32px] font-semibold leading-10 text-white">CourtMate</div>
     </header>
+  );
+}
+
+function CreatingButtonContent() {
+  return (
+    <>
+      <span className="relative h-6 w-6 flex-none">
+        <span className="absolute inset-0 rounded-full border-[3px] border-white/25" />
+        <span className="absolute inset-0 animate-spin rounded-full border-[3px] border-transparent border-t-white" />
+      </span>
+      <span className="flex items-baseline">
+        <span>Creating</span>
+        <span className="ml-1 flex w-6 justify-between" aria-hidden="true">
+          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-white [animation-delay:0ms]" />
+          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-white [animation-delay:120ms]" />
+          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-white [animation-delay:240ms]" />
+        </span>
+      </span>
+    </>
   );
 }

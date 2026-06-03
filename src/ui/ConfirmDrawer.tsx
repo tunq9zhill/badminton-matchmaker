@@ -26,11 +26,11 @@ export function ConfirmDrawer(props: {
 
   return (
     <div
-      className={`fixed inset-0 z-50 flex items-end justify-center p-4 transition-colors duration-[450ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${open ? "bg-[#07160F]/75 backdrop-blur-sm" : "bg-black/0"}`}
+      className={`fixed inset-0 z-50 flex items-end justify-center p-4 transition-colors duration-[600ms] ease-[cubic-bezier(0.265,1.296,0,0.985)] ${open ? "bg-[#07160F]/75 backdrop-blur-sm" : "bg-black/0"}`}
       onClick={() => void closeWith(props.onCancel)}
     >
       <div
-        className={`w-full max-w-md rounded-[20px] border border-white/10 bg-[#183223] p-5 text-white shadow-[0_24px_80px_rgba(0,0,0,0.35)] transition-all duration-[450ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${open ? "translate-y-0 opacity-100" : "translate-y-[110%] opacity-90"}`}
+        className={`w-full max-w-md rounded-[20px] border border-white/10 bg-[#183223] p-5 text-white shadow-[0_24px_80px_rgba(0,0,0,0.35)] transition-all duration-[600ms] ease-[cubic-bezier(0.265,1.296,0,0.985)] ${open ? "translate-y-0 opacity-100" : "translate-y-[110%] opacity-90"}`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="text-[16px] font-medium leading-5 text-white">{props.title}</div>

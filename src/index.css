@@ -7,6 +7,9 @@
   font-optical-sizing: none;
   font-variation-settings: "GRAD" 0;
   color-scheme: dark;
+  --transform-motion-duration: 600ms;
+  --transform-motion-ease: cubic-bezier(0.265, 1.296, 0, 0.985);
+  --toast-motion-duration: 1s;
 }
 
 html, body, #root {
@@ -80,12 +83,54 @@ textarea {
 }
 
 .soft-fade-up {
-  animation: soft-fade-up 280ms cubic-bezier(0.38, 1.37, 0.33, 1) both;
+  animation: soft-fade-up var(--transform-motion-duration) var(--transform-motion-ease) both;
+}
+
+@keyframes toast-move-in {
+  from {
+    transform: translateY(calc(-100% - 80px));
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes toast-move-out {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(calc(-100% - 80px));
+  }
+}
+
+.toast-move-in {
+  animation: toast-move-in var(--toast-motion-duration) var(--transform-motion-ease) both;
+}
+
+.toast-move-out {
+  animation: toast-move-out var(--toast-motion-duration) var(--transform-motion-ease) both;
+}
+
+:where(
+  [class*="transition-transform"],
+  [class*="transition-all"],
+  [class*="active:scale"],
+  [class*="hover:scale"],
+  [class*="group-active:scale"]
+) {
+  transition-duration: var(--transform-motion-duration) !important;
+  transition-timing-function: var(--transform-motion-ease) !important;
+}
+
+:where(.animate-spin, .animate-bounce) {
+  animation-duration: var(--transform-motion-duration) !important;
+  animation-timing-function: var(--transform-motion-ease) !important;
 }
 
 .app-screen-shell {
-  height: 100dvh;
-  min-height: 100svh;
+  height: var(--app-viewport-height, 100dvh);
+  min-height: var(--app-viewport-height, 100svh);
   overflow: hidden;
   overscroll-behavior: none;
 }
