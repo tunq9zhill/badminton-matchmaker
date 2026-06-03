@@ -112,6 +112,21 @@ textarea {
   animation: toast-move-out var(--toast-motion-duration) var(--transform-motion-ease) both;
 }
 
+@keyframes host-refresh-card-fade {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.host-refresh-card {
+  animation: host-refresh-card-fade var(--transform-motion-duration) var(--transform-motion-ease) both;
+}
+
 :where(
   [class*="transition-transform"],
   [class*="transition-all"],
