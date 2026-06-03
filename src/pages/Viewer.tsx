@@ -9,6 +9,7 @@ import {
 } from "../features/session/api";
 import type { Match, Player, Session, Team, Court } from "../app/types";
 import type { ResultRow } from "../features/session/schema";
+import { autoFillWaitingMatches, getMatchQueue } from "../engine/queue";
 
 export function Viewer(props: { sessionId: string }) {
   const conn = useFirestoreConnectionPing();
@@ -32,6 +33,7 @@ export function Viewer(props: { sessionId: string }) {
   const teamById = useMemo(() => new Map(teams.map((t) => [t.id, t])), [teams]);
   const playerById = useMemo(() => new Map(players.map((p) => [p.id, p])), [players]);
   const matchById = useMemo(() => new Map(matches.map((m) => [m.id, m])), [matches]);
+  const queueRows = useMemo(() => (session ? autoFillWaitingMatches(getMatchQueue(session), session, teams) : []), [session, teams]);
 
   const leaderboard = useMemo(() => {
     const rows = [...teams].sort((a, b) => (b.stats.wins - b.stats.losses) - (a.stats.wins - a.stats.losses));
@@ -119,16 +121,25 @@ export function Viewer(props: { sessionId: string }) {
       <Card>
         <CardHeader title="Queue" />
         <CardBody className="space-y-2">
-          {(session?.queueTeams ?? []).map((tid) => {
-            const t = teamById.get(tid);
+          {queueRows.map((row) => {
+            const teamA = teamById.get(row.teamAId);
+            const teamB = row.teamBId ? teamById.get(row.teamBId) : undefined;
             return (
-              <div key={tid} className="rounded-xl border border-slate-100 px-3 py-2">
-                <TeamLine team={t} playerById={playerById} onOpenImage={(name: string, url: string) => setSelectedImage({ name, url })} />
-                <div className="text-xs text-slate-500">played {t?.stats.played ?? 0}</div>
+              <div key={row.id} className="rounded-xl border border-slate-100 px-3 py-2">
+                <div className="flex flex-wrap items-center gap-3">
+                  <TeamLine team={teamA} playerById={playerById} onOpenImage={(name: string, url: string) => setSelectedImage({ name, url })} />
+                  <div className="text-slate-400">vs</div>
+                  {teamB ? (
+                    <TeamLine team={teamB} playerById={playerById} onOpenImage={(name: string, url: string) => setSelectedImage({ name, url })} />
+                  ) : (
+                    <span className="rounded-full border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-500">waiting</span>
+                  )}
+                </div>
+                <div className="mt-1 text-xs text-slate-500">played {teamA?.stats.played ?? 0}</div>
               </div>
             );
           })}
-          {(session?.queueTeams ?? []).length === 0 && <div className="text-sm text-slate-500">Queue empty.</div>}
+          {queueRows.length === 0 && <div className="text-sm text-slate-500">Queue empty.</div>}
         </CardBody>
       </Card>
 

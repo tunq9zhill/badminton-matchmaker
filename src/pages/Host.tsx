@@ -15,10 +15,13 @@ import {
   updateSessionCore,
 } from "../features/session/api";
 import { buildInitialTeams } from "../engine/pairing";
+import { autoFillWaitingMatches, getMatchQueue } from "../engine/queue";
+import { teamPairKey } from "../engine/constraints";
 import {
   assignNextForCourt,
   endSession,
   finishMatch,
+  resetPairing,
   setTeamsAndQueue,
   startOnce,
 } from "../features/session/mutations";
@@ -60,6 +63,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
   const currentMatchSnapTimerRef = useRef<number | null>(null);
   const playerScrollRef = useRef<HTMLDivElement | null>(null);
   const playerDragRef = useRef({ active: false, startX: 0, scrollLeft: 0 });
+  const pairingCompleteNoticeRef = useRef<string | null>(null);
 
   const setToast = useAppStore((s) => s.setToast);
 
@@ -121,20 +125,36 @@ export function Host(props: { sessionId: string; secret?: string }) {
 
   const podiumPlayers = [topPlayers[1], topPlayers[0], topPlayers[2]];
 
-  const queuePreview = useMemo<QueuePreviewRow[]>(() => {
-    const queuedTeams = (session?.queueTeams ?? []).map((teamId) => teamById(teamId)).filter((team): team is Team => !!team);
-    const rows: QueuePreviewRow[] = [];
+  const pairingCompleteNoticeKey = useMemo(() => {
+    if (!session) return null;
+    const activeTeams = teams.filter((team) => !team.archived);
+    if (activeTeams.length < 2) return null;
 
-    for (let index = 0; index < queuedTeams.length; index += 2) {
-      rows.push({
-        id: `${queuedTeams[index]?.id ?? "empty"}-${queuedTeams[index + 1]?.id ?? "waiting"}`,
-        teamA: queuedTeams[index],
-        teamB: queuedTeams[index + 1],
-      });
+    for (let index = 0; index < activeTeams.length; index += 1) {
+      for (let nextIndex = index + 1; nextIndex < activeTeams.length; nextIndex += 1) {
+        if (!session.metHistory[teamPairKey(activeTeams[index].id, activeTeams[nextIndex].id)]) {
+          return null;
+        }
+      }
     }
 
+    return activeTeams.map((team) => team.id).sort().join("__");
+  }, [session, teams]);
+
+  const queuePreview = useMemo<QueuePreviewRow[]>(() => {
+    if (!session) return [];
+    const rows: QueuePreviewRow[] = [];
+    for (const item of autoFillWaitingMatches(getMatchQueue(session), session, teams)) {
+      const teamA = teamById(item.teamAId);
+      if (!teamA) continue;
+      rows.push({
+        id: item.id,
+        teamA,
+        teamB: item.teamBId ? teamById(item.teamBId) : undefined,
+      });
+    }
     return rows;
-  }, [session?.queueTeams, teamById]);
+  }, [session, teamById, teams]);
 
   const courtCountLabel = session?.config.courtCount ?? courts.length;
 
@@ -147,6 +167,35 @@ export function Host(props: { sessionId: string; secret?: string }) {
       if (currentMatchSnapTimerRef.current != null) window.clearTimeout(currentMatchSnapTimerRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (!session || !pairingCompleteNoticeKey) return;
+    if (session.pairingCompleteNoticeKey === pairingCompleteNoticeKey) return;
+    if (pairingCompleteNoticeRef.current === pairingCompleteNoticeKey) return;
+
+    pairingCompleteNoticeRef.current = pairingCompleteNoticeKey;
+    setToast({
+      id: nanoid(),
+      kind: "info",
+      message: "ทุกคู่เจอกันครบแล้ว แนะนำจับคู่ใหม่",
+      primaryAction: {
+        label: "reset repair",
+        onClick: async () => {
+          try {
+            await resetPairing(props.sessionId);
+          } catch (error: any) {
+            setToast({ id: nanoid(), kind: "error", message: error?.message ?? "Failed to reset pairing" });
+          }
+        },
+      },
+      secondaryAction: {
+        label: "cancel",
+        onClick: () => {},
+      },
+    });
+
+    updateSessionCore(props.sessionId, { pairingCompleteNoticeKey }).catch(() => {});
+  }, [pairingCompleteNoticeKey, props.sessionId, session, setToast]);
 
   const handleStart = async () => {
     if (!session) return;
@@ -176,7 +225,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
   };
 
   const getNextMatchTeams = () => {
-    const next = queuePreview[0];
+    const next = queuePreview.find((row) => !!row.teamA && !!row.teamB);
     if (!next?.teamA || !next.teamB) return null;
     return { teamA: next.teamA, teamB: next.teamB };
   };
@@ -197,7 +246,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
   };
 
   const handleAssignNext = async (courtId: string) => {
-    if (!session?.locked || coverageCompleted) return;
+    if (!session?.locked) return;
 
     const next = getNextMatchTeams();
     if (!next) {
@@ -346,7 +395,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
                     teamB={teamB}
                     playerById={playerById}
                     coverageCompleted={coverageCompleted}
-                    canAssign={!!session?.locked && !coverageCompleted}
+                    canAssign={!!session?.locked}
                     onAssignNext={() => void handleAssignNext(court.id)}
                     onCancelMatch={() => {
                       if (!match) return;
@@ -782,11 +831,11 @@ function CourtMatchCard(props: {
         <>
           <div className="absolute left-4 top-[53px] h-[134px] w-[251px] rounded-[16px] border border-dashed border-white/10 px-4 py-4">
             <div className="text-[16px] font-medium leading-5 text-white">
-              {props.coverageCompleted ? "Coverage completed" : "Court is ready"}
+              {props.coverageCompleted ? "Balanced round" : "Court is ready"}
             </div>
             <p className="mt-1 text-[13px] font-normal leading-[18px] text-white/55">
               {props.coverageCompleted
-                ? "All players have completed the current rotation. Rebuild pairing when ready."
+                ? "Assign the next fair match from the available queue."
                 : "Assign the next valid match from the available queue."}
             </p>
           </div>
@@ -887,7 +936,7 @@ function UpcomingMatchesPanel(props: {
 
         {props.rows.length === 0 && (
           <div className="flex h-20 w-full items-center justify-center rounded-[16px] border border-dashed border-white/10 bg-white/[0.05] px-4 text-center text-[14px] font-medium leading-[18px] text-white/45">
-            {props.coverageCompleted ? "Queue is clear. Rebuild pairing when you want another round." : "No upcoming matches yet."}
+            {props.coverageCompleted ? "Waiting for teams to return from court." : "No upcoming matches yet."}
           </div>
         )}
       </div>

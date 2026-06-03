@@ -6,9 +6,19 @@ import type { DocumentReference } from "firebase/firestore";
 import { db, ensureAnonAuth } from "../../app/firebase";
 import type { Match, Player, Session, Team } from "../../app/types";
 import { COL, type ResultRow } from "./schema";
-import { proposeNextMatch } from "../../engine/scheduler";
 import { getDoc, getDocs } from "firebase/firestore";
 import { rebuildTeamsAvoidingTeammates, teammateHistoryFromTeams } from "../../engine/pairing";
+import { nextPhase } from "../../engine/phase";
+import {
+  autoFillWaitingMatches,
+  buildInitialMatchQueue,
+  findReadyQueueItem,
+  getMatchQueue,
+  insertQueueItemAt,
+  queueSessionPatch,
+  rebuildMatchQueue,
+  removeQueueItem,
+} from "../../engine/queue";
 
 
 function uniq(arr: string[]) {
@@ -79,42 +89,24 @@ export async function setTeamsAndQueue(sessionId: string, teams: Team[]) {
     if (!sSnap.exists()) throw new Error("Session missing");
     const s = sSnap.data() as Session;
     if (s.hostUid !== user.uid) throw new Error("Not host");
+    const matchQueue = autoFillWaitingMatches(buildInitialMatchQueue(teams), { ...s, activeTeams: [] }, teams);
 
     tx.update(sRef, {
-      queueTeams: teams.map((t) => t.id),
+      ...queueSessionPatch(matchQueue),
       activeTeams: [],
       phase: "coverage",
+      pairingCompleteNoticeKey: null,
     });
   });
 }
 
 export async function assignNextForCourt(sessionId: string, courtId: string, options: AssignNextOptions = {}) {
   const user = await ensureAnonAuth();
-
-  // 1) Read outside transaction (allowed): session + all teams
-  const sRef = doc(db, COL.sessions, sessionId);
-  const sSnap = await getDoc(sRef);
-  if (!sSnap.exists()) throw new Error("Missing session");
-  const session = sSnap.data() as Session;
-  if (session.hostUid !== user.uid) throw new Error("Not host");
-
   const teamsSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.teams));
   const teamsAll = teamsSnap.docs.map((d) => d.data() as Team);
 
-  // ✅ ใช้เฉพาะทีมที่ไม่ archived และไม่ active
-  const teams = teamsAll.filter((t) => !t.archived); // (จะกรอง isActive เพิ่มก็ได้ แต่ engine น่าจะเช็คอยู่แล้ว)
+  const sRef = doc(db, COL.sessions, sessionId);
 
-  const proposed =
-    options.expectedTeamAId && options.expectedTeamBId
-      ? { teamAId: options.expectedTeamAId, teamBId: options.expectedTeamBId, isFallback: false }
-      : await (async () => {
-          const playersSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.players));
-          const players = playersSnap.docs.map((d) => d.data() as Player);
-          const playersById = new Map(players.map((p) => [p.id, p]));
-          return proposeNextMatch(session, teams, playersById);
-        })();
-
-  // 2) Commit with transaction (atomic): re-check invariants and write
   await runTransaction(db, async (tx) => {
     const sSnap2 = await tx.get(sRef);
     const cRef = doc(db, COL.sessions, sessionId, COL.courts, courtId);
@@ -124,22 +116,30 @@ export async function assignNextForCourt(sessionId: string, courtId: string, opt
     const s2 = sSnap2.data() as Session;
     if (s2.hostUid !== user.uid) throw new Error("Not host");
 
-    if (!proposed) {
+    const queue = autoFillWaitingMatches(getMatchQueue(s2), s2, teamsAll);
+    const firstReady = queue.find((item) => !!item.teamBId) ?? null;
+    const queuedMatch =
+      options.expectedTeamAId && options.expectedTeamBId
+        ? findReadyQueueItem(queue, options.expectedTeamAId, options.expectedTeamBId)
+        : firstReady;
+
+    if (!queuedMatch?.teamBId) {
       tx.update(cRef, { currentMatchId: null });
       return;
     }
+    const originalQueueIndex = queue.findIndex((item) => item.id === queuedMatch.id);
 
-    if (options.expectedTeamAId && options.expectedTeamBId && (s2.queueTeams[0] !== proposed.teamAId || s2.queueTeams[1] !== proposed.teamBId)) {
+    if (
+      options.expectedTeamAId &&
+      options.expectedTeamBId &&
+      (!firstReady || firstReady.teamAId !== queuedMatch.teamAId || firstReady.teamBId !== queuedMatch.teamBId)
+    ) {
       throw new Error("Next match changed. Try assigning again.");
     }
 
-    if (!s2.queueTeams.includes(proposed.teamAId) || !s2.queueTeams.includes(proposed.teamBId)) {
-      throw new Error("Selected match is no longer in queue.");
-    }
-
     // Re-read only the two teams involved (doc refs only)
-    const aRef = doc(db, COL.sessions, sessionId, COL.teams, proposed.teamAId);
-    const bRef = doc(db, COL.sessions, sessionId, COL.teams, proposed.teamBId);
+    const aRef = doc(db, COL.sessions, sessionId, COL.teams, queuedMatch.teamAId);
+    const bRef = doc(db, COL.sessions, sessionId, COL.teams, queuedMatch.teamBId);
     const aSnap = await tx.get(aRef);
     const bSnap = await tx.get(bRef);
     if (!aSnap.exists() || !bSnap.exists()) throw new Error("Missing teams");
@@ -162,10 +162,12 @@ export async function assignNextForCourt(sessionId: string, courtId: string, opt
       teamBId: b.id,
       status: "in_progress",
       startedAt: Date.now(),
-      isFallback: proposed.isFallback ?? false,
+      isFallback: queuedMatch.isFallback ?? false,
       createdAt: Date.now(),
       teamAPlayedPlayerIds: teamAPlayed,
       teamBPlayedPlayerIds: teamBPlayed,
+      originalQueueIndex: Math.max(originalQueueIndex, 0),
+      originalQueueItem: queuedMatch,
     };
 
     tx.set(doc(db, COL.sessions, sessionId, COL.matches, matchId), m);
@@ -175,7 +177,7 @@ export async function assignNextForCourt(sessionId: string, courtId: string, opt
 
     tx.update(sRef, {
       activeTeams: addTo(s2.activeTeams, [a.id, b.id]),
-      queueTeams: removeFrom(s2.queueTeams, [a.id, b.id]),
+      ...queueSessionPatch(removeQueueItem(queue, queuedMatch.id)),
     });
 
     tx.update(cRef, { currentMatchId: matchId });
@@ -213,9 +215,16 @@ export async function cancelMatchAndReschedule(sessionId: string, matchId: strin
     const s = sSnap.data() as Session;
     if (s.hostUid !== user.uid) throw new Error("Not host");
     const m = mSnap.data() as Match;
-
-    // mark match canceled
-    tx.update(mRef, { status: "canceled", endedAt: Date.now() });
+    const returnedTeamIds = [m.teamAId, m.teamBId];
+    const nextActiveTeams = removeFrom(s.activeTeams, returnedTeamIds);
+    const restoredQueueItem = m.originalQueueItem ?? {
+      id: nanoid(10),
+      teamAId: m.teamAId,
+      teamBId: m.teamBId,
+      isFallback: m.isFallback ?? false,
+      createdAt: m.createdAt,
+    };
+    const restoredQueue = insertQueueItemAt(getMatchQueue(s), restoredQueueItem, m.originalQueueIndex ?? 0);
 
     // teams become inactive
     const aRef = doc(db, COL.sessions, sessionId, COL.teams, m.teamAId);
@@ -224,13 +233,14 @@ export async function cancelMatchAndReschedule(sessionId: string, matchId: strin
     tx.update(bRef, { isActive: false });
 
     tx.update(sRef, {
-      activeTeams: removeFrom(s.activeTeams, [m.teamAId, m.teamBId]),
-      queueTeams: addTo(s.queueTeams, [m.teamAId, m.teamBId]),
+      activeTeams: nextActiveTeams,
+      ...queueSessionPatch(restoredQueue),
     });
 
     // clear court current match (reschedule will set new)
     const cRef = doc(db, COL.sessions, sessionId, COL.courts, m.courtId);
     tx.update(cRef, { currentMatchId: null });
+    tx.delete(mRef);
   });
 
 }
@@ -245,6 +255,8 @@ export async function finishMatch(
   }
 ) {
   const user = await ensureAnonAuth();
+  const teamsSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.teams));
+  const teamsAll = teamsSnap.docs.map((d) => d.data() as Team);
 
   await runTransaction(db, async (tx) => {
     const sRef = doc(db, COL.sessions, sessionId);
@@ -293,6 +305,16 @@ export async function finishMatch(
     // 2) WRITES (AFTER ALL READS)
     // -----------------------
     const endedAt = Date.now();
+    const nextTeamAStats = {
+      played: teamA.stats.played + 1,
+      wins: teamA.stats.wins + (aWin ? 1 : 0),
+      losses: teamA.stats.losses + (aWin ? 0 : 1),
+    };
+    const nextTeamBStats = {
+      played: teamB.stats.played + 1,
+      wins: teamB.stats.wins + (bWin ? 1 : 0),
+      losses: teamB.stats.losses + (bWin ? 0 : 1),
+    };
 
     // match update (include scores here)
     tx.update(mRef, {
@@ -308,22 +330,14 @@ export async function finishMatch(
     // team stats + inactive
     tx.update(aRef, {
       isActive: false,
-      stats: {
-        played: teamA.stats.played + 1,
-        wins: teamA.stats.wins + (aWin ? 1 : 0),
-        losses: teamA.stats.losses + (aWin ? 0 : 1),
-      },
+      stats: nextTeamAStats,
       rotationIndex:
         teamA.playerIds.length === 3 ? ((teamA.rotationIndex ?? 0) + 1) % 3 : (teamA.rotationIndex ?? null),
     });
 
     tx.update(bRef, {
       isActive: false,
-      stats: {
-        played: teamB.stats.played + 1,
-        wins: teamB.stats.wins + (bWin ? 1 : 0),
-        losses: teamB.stats.losses + (bWin ? 0 : 1),
-      },
+      stats: nextTeamBStats,
       rotationIndex:
         teamB.playerIds.length === 3 ? ((teamB.rotationIndex ?? 0) + 1) % 3 : (teamB.rotationIndex ?? null),
     });
@@ -350,11 +364,30 @@ export async function finishMatch(
 
     // metHistory
     const metKey = [m.teamAId, m.teamBId].sort().join("__");
+    const nextMetHistory: Session["metHistory"] = { ...s.metHistory, [metKey]: true };
+    const returnedTeamIds = [m.teamAId, m.teamBId];
+    const nextActiveTeams = removeFrom(s.activeTeams, returnedTeamIds);
+    const teamsForQueue = teamsAll.map((team) => {
+      if (team.id === teamA.id) return { ...teamA, isActive: false, stats: nextTeamAStats };
+      if (team.id === teamB.id) return { ...teamB, isActive: false, stats: nextTeamBStats };
+      return team;
+    });
+    const sessionForQueue = {
+      ...s,
+      metHistory: nextMetHistory,
+      activeTeams: nextActiveTeams,
+    };
+    const queue = rebuildMatchQueue(sessionForQueue, teamsForQueue, {
+      returnedTeamIds,
+      justFinishedTeamIds: returnedTeamIds,
+      now: endedAt,
+    });
 
     tx.update(sRef, {
-      metHistory: { ...s.metHistory, [metKey]: true },
-      activeTeams: removeFrom(s.activeTeams, [m.teamAId, m.teamBId]),
-      queueTeams: addTo(s.queueTeams, [m.teamAId, m.teamBId]),
+      metHistory: nextMetHistory,
+      activeTeams: nextActiveTeams,
+      phase: nextPhase(s.phase, teamsForQueue),
+      ...queueSessionPatch(queue),
     });
 
     // result row
@@ -443,10 +476,12 @@ export async function resetPairing(sessionId: string) {
   await b.commit();
 
   // Reset session queues/phase
+  const matchQueue = autoFillWaitingMatches(buildInitialMatchQueue(newTeams), { ...s, activeTeams: [] }, newTeams);
   await updateDoc(sRef, {
     phase: "coverage",
     activeTeams: [],
-    queueTeams: newTeams.map((t) => t.id),
+    ...queueSessionPatch(matchQueue),
+    pairingCompleteNoticeKey: null,
     // teammateHistory should include ALL past teammate pairs (spec)
     // We keep existing + add new
     teammateHistory: { ...s.teammateHistory, ...teammateHistoryFromTeams(newTeams) },
@@ -490,6 +525,8 @@ export async function resetAll(sessionId: string, keepNames: boolean) {
     phase: "coverage",
     activeTeams: [],
     queueTeams: [],
+    matchQueue: [],
+    pairingCompleteNoticeKey: null,
     teammateHistory: {},
     metHistory: {},
     startedAt: null,

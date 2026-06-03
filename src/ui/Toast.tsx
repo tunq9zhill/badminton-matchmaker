@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useAppStore } from "../app/store";
+import { type Toast as ToastState, useAppStore } from "../app/store";
 
 const TOAST_EXIT_MS = 1000;
 
-export function Toast(props: { toast: { id: string; message: string; kind: "info" | "error" | "success"; title?: string } }) {
+export function Toast(props: { toast: ToastState }) {
   const setToast = useAppStore((s) => s.setToast);
   const [isLeaving, setIsLeaving] = useState(false);
   const isLeavingRef = useRef(false);
   const autoDismissTimerRef = useRef<number | null>(null);
   const exitTimerRef = useRef<number | null>(null);
+  const hasActions = !!props.toast.primaryAction || !!props.toast.secondaryAction;
 
   const dismissToast = useCallback(() => {
     if (isLeavingRef.current) return;
@@ -26,6 +27,8 @@ export function Toast(props: { toast: { id: string; message: string; kind: "info
   }, [setToast]);
 
   useEffect(() => {
+    if (hasActions) return;
+
     autoDismissTimerRef.current = window.setTimeout(dismissToast, 2600);
 
     return () => {
@@ -38,7 +41,15 @@ export function Toast(props: { toast: { id: string; message: string; kind: "info
         exitTimerRef.current = null;
       }
     };
-  }, [dismissToast, props.toast.id]);
+  }, [dismissToast, hasActions, props.toast.id]);
+
+  const runAction = useCallback(
+    (action: ToastState["primaryAction"]) => {
+      dismissToast();
+      void action?.onClick();
+    },
+    [dismissToast],
+  );
 
   const tone =
     props.toast.kind === "error"
@@ -85,6 +96,28 @@ export function Toast(props: { toast: { id: string; message: string; kind: "info
           <div className="mt-1 text-[15px] font-normal leading-[21px] tracking-normal text-white/62">
             {props.toast.message}
           </div>
+          {hasActions && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {props.toast.primaryAction && (
+                <button
+                  type="button"
+                  onClick={() => runAction(props.toast.primaryAction)}
+                  className="rounded-full bg-[#37B64B] px-3 py-1.5 text-[13px] font-semibold leading-4 text-white transition active:scale-[0.97]"
+                >
+                  {props.toast.primaryAction.label}
+                </button>
+              )}
+              {props.toast.secondaryAction && (
+                <button
+                  type="button"
+                  onClick={() => runAction(props.toast.secondaryAction)}
+                  className="rounded-full border border-white/10 px-3 py-1.5 text-[13px] font-semibold leading-4 text-white/65 transition active:scale-[0.97]"
+                >
+                  {props.toast.secondaryAction.label}
+                </button>
+              )}
+            </div>
+          )}
         </div>
         <button
           type="button"
