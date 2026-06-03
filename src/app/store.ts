@@ -1,6 +1,18 @@
 import { create } from "zustand";
 
-type Toast = { id: string; message: string; kind: "info" | "error" | "success"; title?: string };
+export type ToastAction = {
+  label: string;
+  onClick: () => void | Promise<void>;
+};
+
+export type Toast = {
+  id: string;
+  message: string;
+  kind: "info" | "error" | "success";
+  title?: string;
+  primaryAction?: ToastAction;
+  secondaryAction?: ToastAction;
+};
 
 type AppState = {
   toast?: Toast;

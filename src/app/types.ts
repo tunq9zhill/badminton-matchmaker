@@ -15,6 +15,8 @@ export type Session = {
 
   activeTeams: string[];
   queueTeams: string[];
+  matchQueue?: MatchQueueItem[];
+  pairingCompleteNoticeKey?: string | null;
 
   teammateHistory: Record<string, true>; // playerPairKey -> true
   metHistory: Record<string, true>;      // teamPairKey -> true
@@ -64,6 +66,16 @@ export type Match = {
   // For 3-player team rotation: host records which 2 actually played.
   teamAPlayedPlayerIds?: string[];
   teamBPlayedPlayerIds?: string[];
+  originalQueueIndex?: number;
+  originalQueueItem?: MatchQueueItem;
   scoreA?: number;
   scoreB?: number;
+};
+
+export type MatchQueueItem = {
+  id: string;
+  teamAId: string;
+  teamBId?: string | null;
+  isFallback?: boolean;
+  createdAt: number;
 };
