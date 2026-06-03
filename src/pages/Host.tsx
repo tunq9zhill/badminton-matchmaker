@@ -7,7 +7,6 @@ import courtMateLogo from "../assets/CourtMate-logo.png";
 import courtsBackground from "../assets/CourtsPNG.png";
 import {
   assertHost,
-  readSessionState,
   subscribeCourts,
   subscribeMatches,
   subscribePlayers,
@@ -15,6 +14,7 @@ import {
   subscribeTeams,
   updateSessionCore,
 } from "../features/session/api";
+import { recoverSessionState } from "../features/session/recovery";
 import { buildInitialTeams } from "../engine/pairing";
 import { autoFillWaitingMatches, getMatchQueue } from "../engine/queue";
 import { teamPairKey } from "../engine/constraints";
@@ -24,7 +24,6 @@ import {
   finishMatch,
   resetPairing,
   setTeamsAndQueue,
-  startOnce,
 } from "../features/session/mutations";
 import { ConfirmDrawer } from "../ui/ConfirmDrawer";
 import { Modal } from "../ui/Modal";
@@ -55,62 +54,6 @@ const COURT_CARD_WIDTH = 283;
 const COURT_CARD_GAP = 12;
 const COURT_CARD_STEP = COURT_CARD_WIDTH + COURT_CARD_GAP;
 const REFRESH_HOLD_MS = 3000;
-
-type SessionStateSnapshot = Awaited<ReturnType<typeof readSessionState>>;
-
-function findSavedStateIssues(snapshot: SessionStateSnapshot) {
-  const issues: string[] = [];
-  const teamById = new Map(snapshot.teams.map((team) => [team.id, team]));
-  const matchById = new Map(snapshot.matches.map((match) => [match.id, match]));
-  const courtById = new Map(snapshot.courts.map((court) => [court.id, court]));
-  const seenQueueTeamIds = new Set<string>();
-
-  for (const teamId of snapshot.session.queueTeams ?? []) {
-    if (seenQueueTeamIds.has(teamId)) {
-      issues.push("Saved queue has duplicated team references.");
-      break;
-    }
-    seenQueueTeamIds.add(teamId);
-    if (!teamById.has(teamId)) {
-      issues.push("Saved queue references a missing team.");
-      break;
-    }
-  }
-
-  for (const item of getMatchQueue(snapshot.session)) {
-    if (!teamById.has(item.teamAId)) {
-      issues.push("Saved match queue references a missing Team A.");
-      break;
-    }
-    if (item.teamBId && !teamById.has(item.teamBId)) {
-      issues.push("Saved match queue references a missing Team B.");
-      break;
-    }
-  }
-
-  for (const teamId of snapshot.session.activeTeams) {
-    if (!teamById.has(teamId)) {
-      issues.push("Saved active team list references a missing team.");
-      break;
-    }
-  }
-
-  for (const court of snapshot.courts) {
-    if (court.currentMatchId && !matchById.has(court.currentMatchId)) {
-      issues.push("A saved court references a missing match.");
-      break;
-    }
-  }
-
-  for (const match of snapshot.matches) {
-    if ((match.status === "scheduled" || match.status === "in_progress") && !courtById.has(match.courtId)) {
-      issues.push("A saved active match references a missing court.");
-      break;
-    }
-  }
-
-  return issues;
-}
 
 export function Host(props: { sessionId: string; secret?: string }) {
   const [confirmHome, setConfirmHome] = useState(false);
@@ -269,7 +212,6 @@ export function Host(props: { sessionId: string; secret?: string }) {
 
     try {
       await assertHost(props.sessionId);
-      await startOnce(props.sessionId);
 
       const autoOddMode: Session["config"]["oddMode"] = players.length % 2 === 1 ? "three_player_rotation" : "none";
       await updateSessionCore(props.sessionId, { config: { ...session.config, oddMode: autoOddMode } });
@@ -280,7 +222,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
         setToast({ id: nanoid(), kind: "info", message: warnings[0] });
       }
 
-      await setTeamsAndQueue(props.sessionId, newTeams);
+      await setTeamsAndQueue(props.sessionId, newTeams, preparedSession);
       setToast({
         id: nanoid(),
         kind: "success",
@@ -293,8 +235,16 @@ export function Host(props: { sessionId: string; secret?: string }) {
 
   const refreshSessionState = async () => {
     try {
-      const snapshot = await readSessionState(props.sessionId);
-      const issues = findSavedStateIssues(snapshot);
+      const recovery = await recoverSessionState(props.sessionId);
+      if (recovery.status === "failed") {
+        setToast({
+          id: nanoid(),
+          kind: "error",
+          message: recovery.issues[0] ? `Recovery failed: ${recovery.issues[0]}` : "Recovery failed. No valid snapshot exists.",
+        });
+        return;
+      }
+      const snapshot = recovery.state;
 
       setSession(snapshot.session);
       setPlayers(snapshot.players);
@@ -315,10 +265,11 @@ export function Host(props: { sessionId: string; secret?: string }) {
       setSubscriptionEpoch((epoch) => epoch + 1);
       setToast({
         id: nanoid(),
-        kind: issues.length ? "info" : "success",
-        message: issues.length
-          ? `State refreshed from saved data. ${issues[0]}`
-          : "State refreshed from saved data.",
+        kind: recovery.status === "restored" ? "info" : "success",
+        message:
+          recovery.status === "restored"
+            ? `Recovered latest valid game state. ${recovery.issues[0] ?? ""}`.trim()
+            : "State refreshed from saved data.",
       });
     } catch (error: any) {
       setToast({ id: nanoid(), kind: "error", message: error?.message ?? "Failed to refresh state" });

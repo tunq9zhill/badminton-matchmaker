@@ -19,6 +19,7 @@ import {
   rebuildMatchQueue,
   removeQueueItem,
 } from "../../engine/queue";
+import { commitGameState } from "./recovery";
 
 
 function uniq(arr: string[]) {
@@ -57,23 +58,12 @@ function defaultPlayedIds(team: Team) {
 }
 
 export async function startOnce(sessionId: string) {
-  const user = await ensureAnonAuth();
-
-  await runTransaction(db, async (tx) => {
-    const sRef = doc(db, COL.sessions, sessionId);
-    const sSnap = await tx.get(sRef);
-    if (!sSnap.exists()) throw new Error("Session missing");
-    const session = sSnap.data() as Session;
-    if (session.hostUid !== user.uid) throw new Error("Not host");
-    if (session.locked) return; // already started
-
-    // Lock edits; actual team creation is done by host UI via a separate flow in this demo.
-    tx.update(sRef, { locked: true, startedAt: Date.now() });
-  });
+  await ensureAnonAuth();
+  await updateDoc(doc(db, COL.sessions, sessionId), { locked: true, startedAt: Date.now() });
 }
 
-export async function setTeamsAndQueue(sessionId: string, teams: Team[]) {
-  const user = await ensureAnonAuth();
+export async function setTeamsAndQueue(sessionId: string, teams: Team[], baseSession?: Session) {
+  await ensureAnonAuth();
 
   const b = writeBatch(db);
   const sRef = doc(db, COL.sessions, sessionId);
@@ -84,163 +74,180 @@ export async function setTeamsAndQueue(sessionId: string, teams: Team[]) {
   // reset courts + matches are left as-is in this demo; in production delete/cleanup.
   await b.commit();
 
-  await runTransaction(db, async (tx) => {
-    const sSnap = await tx.get(sRef);
-    if (!sSnap.exists()) throw new Error("Session missing");
-    const s = sSnap.data() as Session;
-    if (s.hostUid !== user.uid) throw new Error("Not host");
-    const matchQueue = autoFillWaitingMatches(buildInitialMatchQueue(teams), { ...s, activeTeams: [] }, teams);
+  const sessionForQueue: Session = baseSession ?? {
+    id: sessionId,
+    createdAt: Date.now(),
+    hostUid: "",
+    hostSecretHash: "",
+    phase: "coverage",
+    config: { courtCount: 1, scoring: 21, oddMode: "none" },
+    activeTeams: [],
+    queueTeams: [],
+    matchQueue: [],
+    pairingCompleteNoticeKey: null,
+    teammateHistory: {},
+    metHistory: {},
+    locked: true,
+  };
+  const matchQueue = autoFillWaitingMatches(buildInitialMatchQueue(teams), { ...sessionForQueue, activeTeams: [] }, teams);
 
-    tx.update(sRef, {
-      ...queueSessionPatch(matchQueue),
-      activeTeams: [],
-      phase: "coverage",
-      pairingCompleteNoticeKey: null,
-    });
+  await updateDoc(sRef, {
+    ...queueSessionPatch(matchQueue),
+    activeTeams: [],
+    phase: "coverage",
+    pairingCompleteNoticeKey: null,
+    locked: true,
+    startedAt: baseSession?.startedAt ?? Date.now(),
   });
 }
 
 export async function assignNextForCourt(sessionId: string, courtId: string, options: AssignNextOptions = {}) {
-  const user = await ensureAnonAuth();
-  const teamsSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.teams));
-  const teamsAll = teamsSnap.docs.map((d) => d.data() as Team);
+  await commitGameState(sessionId, "assign-next", async () => {
+    const user = await ensureAnonAuth();
+    const teamsSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.teams));
+    const teamsAll = teamsSnap.docs.map((d) => d.data() as Team);
 
-  const sRef = doc(db, COL.sessions, sessionId);
+    const sRef = doc(db, COL.sessions, sessionId);
 
-  await runTransaction(db, async (tx) => {
-    const sSnap2 = await tx.get(sRef);
-    const cRef = doc(db, COL.sessions, sessionId, COL.courts, courtId);
-    const cSnap = await tx.get(cRef);
+    await runTransaction(db, async (tx) => {
+      const sSnap2 = await tx.get(sRef);
+      const cRef = doc(db, COL.sessions, sessionId, COL.courts, courtId);
+      const cSnap = await tx.get(cRef);
 
-    if (!sSnap2.exists() || !cSnap.exists()) throw new Error("Missing session/court");
-    const s2 = sSnap2.data() as Session;
-    if (s2.hostUid !== user.uid) throw new Error("Not host");
+      if (!sSnap2.exists() || !cSnap.exists()) throw new Error("Missing session/court");
+      const s2 = sSnap2.data() as Session;
+      if (s2.hostUid !== user.uid) throw new Error("Not host");
 
-    const queue = autoFillWaitingMatches(getMatchQueue(s2), s2, teamsAll);
-    const firstReady = queue.find((item) => !!item.teamBId) ?? null;
-    const queuedMatch =
-      options.expectedTeamAId && options.expectedTeamBId
-        ? findReadyQueueItem(queue, options.expectedTeamAId, options.expectedTeamBId)
-        : firstReady;
+      const queue = autoFillWaitingMatches(getMatchQueue(s2), s2, teamsAll);
+      const firstReady = queue.find((item) => !!item.teamBId) ?? null;
+      const queuedMatch =
+        options.expectedTeamAId && options.expectedTeamBId
+          ? findReadyQueueItem(queue, options.expectedTeamAId, options.expectedTeamBId)
+          : firstReady;
 
-    if (!queuedMatch?.teamBId) {
-      tx.update(cRef, { currentMatchId: null });
-      return;
-    }
-    const originalQueueIndex = queue.findIndex((item) => item.id === queuedMatch.id);
+      if (!queuedMatch?.teamBId) {
+        tx.update(cRef, { currentMatchId: null });
+        return;
+      }
+      const originalQueueIndex = queue.findIndex((item) => item.id === queuedMatch.id);
 
-    if (
-      options.expectedTeamAId &&
-      options.expectedTeamBId &&
-      (!firstReady || firstReady.teamAId !== queuedMatch.teamAId || firstReady.teamBId !== queuedMatch.teamBId)
-    ) {
-      throw new Error("Next match changed. Try assigning again.");
-    }
+      if (
+        options.expectedTeamAId &&
+        options.expectedTeamBId &&
+        (!firstReady || firstReady.teamAId !== queuedMatch.teamAId || firstReady.teamBId !== queuedMatch.teamBId)
+      ) {
+        throw new Error("Next match changed. Try assigning again.");
+      }
 
-    // Re-read only the two teams involved (doc refs only)
-    const aRef = doc(db, COL.sessions, sessionId, COL.teams, queuedMatch.teamAId);
-    const bRef = doc(db, COL.sessions, sessionId, COL.teams, queuedMatch.teamBId);
-    const aSnap = await tx.get(aRef);
-    const bSnap = await tx.get(bRef);
-    if (!aSnap.exists() || !bSnap.exists()) throw new Error("Missing teams");
+      // Re-read only the two teams involved (doc refs only)
+      const aRef = doc(db, COL.sessions, sessionId, COL.teams, queuedMatch.teamAId);
+      const bRef = doc(db, COL.sessions, sessionId, COL.teams, queuedMatch.teamBId);
+      const aSnap = await tx.get(aRef);
+      const bSnap = await tx.get(bRef);
+      if (!aSnap.exists() || !bSnap.exists()) throw new Error("Missing teams");
 
-    const a = aSnap.data() as Team;
-    const b = bSnap.data() as Team;
+      const a = aSnap.data() as Team;
+      const b = bSnap.data() as Team;
 
-    // Strict constraints: must be inactive and not in activeTeams
-    if (a.isActive || b.isActive) return;
-    if (s2.activeTeams.includes(a.id) || s2.activeTeams.includes(b.id)) return;
+      // Strict constraints: must be inactive and not in activeTeams
+      if (a.isActive || b.isActive) return;
+      if (s2.activeTeams.includes(a.id) || s2.activeTeams.includes(b.id)) return;
 
-    const teamAPlayed = playedIdsForAssign(a, options.teamAPlayedPlayerIds, "Team A");
-    const teamBPlayed = playedIdsForAssign(b, options.teamBPlayedPlayerIds, "Team B");
+      const teamAPlayed = playedIdsForAssign(a, options.teamAPlayedPlayerIds, "Team A");
+      const teamBPlayed = playedIdsForAssign(b, options.teamBPlayedPlayerIds, "Team B");
 
-    const matchId = nanoid(10);
-    const m: Match = {
-      id: matchId,
-      courtId,
-      teamAId: a.id,
-      teamBId: b.id,
-      status: "in_progress",
-      startedAt: Date.now(),
-      isFallback: queuedMatch.isFallback ?? false,
-      createdAt: Date.now(),
-      teamAPlayedPlayerIds: teamAPlayed,
-      teamBPlayedPlayerIds: teamBPlayed,
-      originalQueueIndex: Math.max(originalQueueIndex, 0),
-      originalQueueItem: queuedMatch,
-    };
+      const matchId = nanoid(10);
+      const m: Match = {
+        id: matchId,
+        courtId,
+        teamAId: a.id,
+        teamBId: b.id,
+        status: "in_progress",
+        startedAt: Date.now(),
+        isFallback: queuedMatch.isFallback ?? false,
+        createdAt: Date.now(),
+        teamAPlayedPlayerIds: teamAPlayed,
+        teamBPlayedPlayerIds: teamBPlayed,
+        originalQueueIndex: Math.max(originalQueueIndex, 0),
+        originalQueueItem: queuedMatch,
+      };
 
-    tx.set(doc(db, COL.sessions, sessionId, COL.matches, matchId), m);
+      tx.set(doc(db, COL.sessions, sessionId, COL.matches, matchId), m);
 
-    tx.update(aRef, { isActive: true });
-    tx.update(bRef, { isActive: true });
+      tx.update(aRef, { isActive: true });
+      tx.update(bRef, { isActive: true });
 
-    tx.update(sRef, {
-      activeTeams: addTo(s2.activeTeams, [a.id, b.id]),
-      ...queueSessionPatch(removeQueueItem(queue, queuedMatch.id)),
+      tx.update(sRef, {
+        activeTeams: addTo(s2.activeTeams, [a.id, b.id]),
+        ...queueSessionPatch(removeQueueItem(queue, queuedMatch.id)),
+      });
+
+      tx.update(cRef, { currentMatchId: matchId });
     });
-
-    tx.update(cRef, { currentMatchId: matchId });
   });
 }
 
 
 export async function beginMatch(sessionId: string, matchId: string) {
-  const user = await ensureAnonAuth();
-  await runTransaction(db, async (tx) => {
-    const sRef = doc(db, COL.sessions, sessionId);
-    const mRef = doc(db, COL.sessions, sessionId, COL.matches, matchId);
-    const sSnap = await tx.get(sRef);
-    const mSnap = await tx.get(mRef);
-    if (!sSnap.exists() || !mSnap.exists()) throw new Error("Missing session/match");
-    const s = sSnap.data() as Session;
-    if (s.hostUid !== user.uid) throw new Error("Not host");
-    const m = mSnap.data() as Match;
-    if (m.status !== "scheduled") return;
-    tx.update(mRef, { status: "in_progress", startedAt: Date.now() });
+  await commitGameState(sessionId, "begin-match", async () => {
+    const user = await ensureAnonAuth();
+    await runTransaction(db, async (tx) => {
+      const sRef = doc(db, COL.sessions, sessionId);
+      const mRef = doc(db, COL.sessions, sessionId, COL.matches, matchId);
+      const sSnap = await tx.get(sRef);
+      const mSnap = await tx.get(mRef);
+      if (!sSnap.exists() || !mSnap.exists()) throw new Error("Missing session/match");
+      const s = sSnap.data() as Session;
+      if (s.hostUid !== user.uid) throw new Error("Not host");
+      const m = mSnap.data() as Match;
+      if (m.status !== "scheduled") return;
+      tx.update(mRef, { status: "in_progress", startedAt: Date.now() });
+    });
   });
 }
 
 export async function cancelMatchAndReschedule(sessionId: string, matchId: string) {
-  const user = await ensureAnonAuth();
+  await commitGameState(sessionId, "cancel-match", async () => {
+    const user = await ensureAnonAuth();
 
-  await runTransaction(db, async (tx) => {
-    const sRef = doc(db, COL.sessions, sessionId);
-    const mRef = doc(db, COL.sessions, sessionId, COL.matches, matchId);
+    await runTransaction(db, async (tx) => {
+      const sRef = doc(db, COL.sessions, sessionId);
+      const mRef = doc(db, COL.sessions, sessionId, COL.matches, matchId);
 
-    const sSnap = await tx.get(sRef);
-    const mSnap = await tx.get(mRef);
-    if (!sSnap.exists() || !mSnap.exists()) throw new Error("Missing session/match");
+      const sSnap = await tx.get(sRef);
+      const mSnap = await tx.get(mRef);
+      if (!sSnap.exists() || !mSnap.exists()) throw new Error("Missing session/match");
 
-    const s = sSnap.data() as Session;
-    if (s.hostUid !== user.uid) throw new Error("Not host");
-    const m = mSnap.data() as Match;
-    const returnedTeamIds = [m.teamAId, m.teamBId];
-    const nextActiveTeams = removeFrom(s.activeTeams, returnedTeamIds);
-    const restoredQueueItem = m.originalQueueItem ?? {
-      id: nanoid(10),
-      teamAId: m.teamAId,
-      teamBId: m.teamBId,
-      isFallback: m.isFallback ?? false,
-      createdAt: m.createdAt,
-    };
-    const restoredQueue = insertQueueItemAt(getMatchQueue(s), restoredQueueItem, m.originalQueueIndex ?? 0);
+      const s = sSnap.data() as Session;
+      if (s.hostUid !== user.uid) throw new Error("Not host");
+      const m = mSnap.data() as Match;
+      const returnedTeamIds = [m.teamAId, m.teamBId];
+      const nextActiveTeams = removeFrom(s.activeTeams, returnedTeamIds);
+      const restoredQueueItem = m.originalQueueItem ?? {
+        id: nanoid(10),
+        teamAId: m.teamAId,
+        teamBId: m.teamBId,
+        isFallback: m.isFallback ?? false,
+        createdAt: m.createdAt,
+      };
+      const restoredQueue = insertQueueItemAt(getMatchQueue(s), restoredQueueItem, m.originalQueueIndex ?? 0);
 
-    // teams become inactive
-    const aRef = doc(db, COL.sessions, sessionId, COL.teams, m.teamAId);
-    const bRef = doc(db, COL.sessions, sessionId, COL.teams, m.teamBId);
-    tx.update(aRef, { isActive: false });
-    tx.update(bRef, { isActive: false });
+      // teams become inactive
+      const aRef = doc(db, COL.sessions, sessionId, COL.teams, m.teamAId);
+      const bRef = doc(db, COL.sessions, sessionId, COL.teams, m.teamBId);
+      tx.update(aRef, { isActive: false });
+      tx.update(bRef, { isActive: false });
 
-    tx.update(sRef, {
-      activeTeams: nextActiveTeams,
-      ...queueSessionPatch(restoredQueue),
+      tx.update(sRef, {
+        activeTeams: nextActiveTeams,
+        ...queueSessionPatch(restoredQueue),
+      });
+
+      // clear court current match (reschedule will set new)
+      const cRef = doc(db, COL.sessions, sessionId, COL.courts, m.courtId);
+      tx.update(cRef, { currentMatchId: null });
+      tx.delete(mRef);
     });
-
-    // clear court current match (reschedule will set new)
-    const cRef = doc(db, COL.sessions, sessionId, COL.courts, m.courtId);
-    tx.update(cRef, { currentMatchId: null });
-    tx.delete(mRef);
   });
 
 }
@@ -254,11 +261,12 @@ export async function finishMatch(
     scoreB?: number;
   }
 ) {
-  const user = await ensureAnonAuth();
-  const teamsSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.teams));
-  const teamsAll = teamsSnap.docs.map((d) => d.data() as Team);
+  await commitGameState(sessionId, "finish-match", async () => {
+    const user = await ensureAnonAuth();
+    const teamsSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.teams));
+    const teamsAll = teamsSnap.docs.map((d) => d.data() as Team);
 
-  await runTransaction(db, async (tx) => {
+    await runTransaction(db, async (tx) => {
     const sRef = doc(db, COL.sessions, sessionId);
     const mRef = doc(db, COL.sessions, sessionId, COL.matches, matchId);
 
@@ -408,132 +416,139 @@ export async function finishMatch(
 
     // clear court current match
     tx.update(doc(db, COL.sessions, sessionId, COL.courts, m.courtId), { currentMatchId: null });
+    });
   });
 }
 
 
 
 export async function resetTableStats(sessionId: string) {
-  const user = await ensureAnonAuth();
-  const sRef = doc(db, COL.sessions, sessionId);
-  const sSnap = await getDoc(sRef);
-  if (!sSnap.exists()) throw new Error("Missing session");
-  const s = sSnap.data() as Session;
-  if (s.hostUid !== user.uid) throw new Error("Not host");
+  await commitGameState(sessionId, "reset-table-stats", async () => {
+    const user = await ensureAnonAuth();
+    const sRef = doc(db, COL.sessions, sessionId);
+    const sSnap = await getDoc(sRef);
+    if (!sSnap.exists()) throw new Error("Missing session");
+    const s = sSnap.data() as Session;
+    if (s.hostUid !== user.uid) throw new Error("Not host");
 
-  const playersSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.players));
-  const b = writeBatch(db);
-  playersSnap.docs.forEach((d) => {
-    b.update(d.ref, { stats: { played: 0, wins: 0, losses: 0 }, playHistory: [] });
+    const playersSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.players));
+    const b = writeBatch(db);
+    playersSnap.docs.forEach((d) => {
+      b.update(d.ref, { stats: { played: 0, wins: 0, losses: 0 }, playHistory: [] });
+    });
+    await b.commit();
   });
-  await b.commit();
 }
 
 
 export async function resetPairing(sessionId: string) {
-  const user = await ensureAnonAuth();
+  return commitGameState(sessionId, "reset-pairing", async () => {
+    const user = await ensureAnonAuth();
 
-  // Read snapshot
-  const sRef = doc(db, COL.sessions, sessionId);
-  const sSnap = await getDoc(sRef);
-  if (!sSnap.exists()) throw new Error("Missing session");
-  const s = sSnap.data() as Session;
-  if (s.hostUid !== user.uid) throw new Error("Not host");
+    // Read snapshot
+    const sRef = doc(db, COL.sessions, sessionId);
+    const sSnap = await getDoc(sRef);
+    if (!sSnap.exists()) throw new Error("Missing session");
+    const s = sSnap.data() as Session;
+    if (s.hostUid !== user.uid) throw new Error("Not host");
 
-  const playersSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.players));
-  const players = playersSnap.docs.map((d) => d.data() as Player);
+    const playersSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.players));
+    const players = playersSnap.docs.map((d) => d.data() as Player);
 
-  const teamsSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.teams));
+    const teamsSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.teams));
 
 
   // Rebuild teams avoiding teammate repeats (best-effort)
-  const { teams: newTeams, warnings } = rebuildTeamsAvoidingTeammates(players, s.teammateHistory, s.config.oddMode);
+    const { teams: newTeams, warnings } = rebuildTeamsAvoidingTeammates(players, s.teammateHistory, s.config.oddMode);
 
   // Keep stats: map player/team stats is tricky because new teams are new ids.
   // Spec says keep player + team stats; team stats can't map 1:1 if teams change.
   // We keep PLAYER stats and reset TEAM stats (honest + consistent).
   // If you want “preserve team stats by player pairs”, tell me—ทำได้แต่ต้อง matching logic เพิ่ม.
 
-  const b = writeBatch(db);
+    const b = writeBatch(db);
 
-  // Cancel all matches + clear courts
-  const matchesSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.matches));
-  for (const d of matchesSnap.docs) b.delete(d.ref);
+    // Cancel all matches + clear courts
+    const matchesSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.matches));
+    for (const d of matchesSnap.docs) b.delete(d.ref);
 
-  const courtsSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.courts));
-  for (const c of courtsSnap.docs) b.update(c.ref, { currentMatchId: null });
+    const courtsSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.courts));
+    for (const c of courtsSnap.docs) b.update(c.ref, { currentMatchId: null });
 
-  // Delete old teams
-  for (const tDoc of teamsSnap.docs) {
-    b.update(tDoc.ref, { archived: true, isActive: false });
-  }
+    // Delete old teams
+    for (const tDoc of teamsSnap.docs) {
+      b.update(tDoc.ref, { archived: true, isActive: false });
+    }
 
-  // Create new teams
-  for (const t of newTeams) {
-    b.set(doc(db, COL.sessions, sessionId, COL.teams, t.id), { ...t, archived: false });
-  }
+    // Create new teams
+    for (const t of newTeams) {
+      b.set(doc(db, COL.sessions, sessionId, COL.teams, t.id), { ...t, archived: false });
+    }
 
-  await b.commit();
+    await b.commit();
 
-  // Reset session queues/phase
-  const matchQueue = autoFillWaitingMatches(buildInitialMatchQueue(newTeams), { ...s, activeTeams: [] }, newTeams);
-  await updateDoc(sRef, {
-    phase: "coverage",
-    activeTeams: [],
-    ...queueSessionPatch(matchQueue),
-    pairingCompleteNoticeKey: null,
-    // teammateHistory should include ALL past teammate pairs (spec)
-    // We keep existing + add new
-    teammateHistory: { ...s.teammateHistory, ...teammateHistoryFromTeams(newTeams) },
-    // metHistory stays (spec says keep finished history)
-    metHistory: s.metHistory,
+    // Reset session queues/phase
+    const matchQueue = autoFillWaitingMatches(buildInitialMatchQueue(newTeams), { ...s, activeTeams: [] }, newTeams);
+    await updateDoc(sRef, {
+      phase: "coverage",
+      activeTeams: [],
+      ...queueSessionPatch(matchQueue),
+      pairingCompleteNoticeKey: null,
+      // teammateHistory should include ALL past teammate pairs (spec)
+      // We keep existing + add new
+      teammateHistory: { ...s.teammateHistory, ...teammateHistoryFromTeams(newTeams) },
+      // metHistory stays (spec says keep finished history)
+      metHistory: s.metHistory,
+    });
+
+    return { warnings };
   });
-
-  return { warnings };
 }
 
 export async function resetAll(sessionId: string, keepNames: boolean) {
-  const user = await ensureAnonAuth();
+  await commitGameState(sessionId, "reset-all", async () => {
+    const user = await ensureAnonAuth();
 
-  const sRef = doc(db, COL.sessions, sessionId);
-  const sSnap = await getDoc(sRef);
-  if (!sSnap.exists()) throw new Error("Missing session");
-  const s = sSnap.data() as Session;
-  if (s.hostUid !== user.uid) throw new Error("Not host");
+    const sRef = doc(db, COL.sessions, sessionId);
+    const sSnap = await getDoc(sRef);
+    if (!sSnap.exists()) throw new Error("Missing session");
+    const s = sSnap.data() as Session;
+    if (s.hostUid !== user.uid) throw new Error("Not host");
 
-  const b = writeBatch(db);
+    const b = writeBatch(db);
 
   // delete matches/results/teams
-  for (const colName of [COL.matches, COL.results, COL.teams] as const) {
-    const snap = await getDocs(collection(db, COL.sessions, sessionId, colName));
-    for (const d of snap.docs) b.delete(d.ref);
-  }
+    for (const colName of [COL.matches, COL.results, COL.teams] as const) {
+      const snap = await getDocs(collection(db, COL.sessions, sessionId, colName));
+      for (const d of snap.docs) b.delete(d.ref);
+    }
 
-  // reset courts
-  const courtsSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.courts));
-  for (const c of courtsSnap.docs) b.update(c.ref, { currentMatchId: null });
+    // reset courts
+    const courtsSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.courts));
+    for (const c of courtsSnap.docs) b.update(c.ref, { currentMatchId: null });
 
-  // players: delete or keep names (and reset stats if keep)
-  const playersSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.players));
-  for (const pdoc of playersSnap.docs) {
-    if (!keepNames) b.delete(pdoc.ref);
-    else b.update(pdoc.ref, { stats: { played: 0, wins: 0, losses: 0 } });
-  }
+    // players: delete or keep names (and reset stats if keep)
+    const playersSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.players));
+    for (const pdoc of playersSnap.docs) {
+      if (!keepNames) b.delete(pdoc.ref);
+      else b.update(pdoc.ref, { stats: { played: 0, wins: 0, losses: 0 } });
+    }
 
-  // reset session
-  b.update(sRef, {
-    phase: "coverage",
-    activeTeams: [],
-    queueTeams: [],
-    matchQueue: [],
-    pairingCompleteNoticeKey: null,
-    teammateHistory: {},
-    metHistory: {},
-    startedAt: null,
-    locked: false,
-  } as any);
+    // reset session
+    b.update(sRef, {
+      phase: "coverage",
+      activeTeams: [],
+      queueTeams: [],
+      matchQueue: [],
+      pairingCompleteNoticeKey: null,
+      teammateHistory: {},
+      metHistory: {},
+      startedAt: null,
+      locked: false,
+    } as any);
 
-  await b.commit();
+    await b.commit();
+  });
 }
 
 export async function endSession(sessionId: string) {
@@ -569,15 +584,17 @@ export async function endSession(sessionId: string) {
 }
 
 export async function updateMatchScore(sessionId: string, matchId: string, scoreA: number, scoreB: number) {
-  const user = await ensureAnonAuth();
-  await runTransaction(db, async (tx) => {
-    const sRef = doc(db, COL.sessions, sessionId);
-    const mRef = doc(db, COL.sessions, sessionId, COL.matches, matchId);
-    const sSnap = await tx.get(sRef);
-    const mSnap = await tx.get(mRef);
-    if (!sSnap.exists() || !mSnap.exists()) throw new Error("Missing session/match");
-    const s = sSnap.data() as Session;
-    if (s.hostUid !== user.uid) throw new Error("Not host");
-    tx.update(mRef, { scoreA, scoreB });
+  await commitGameState(sessionId, "update-match-score", async () => {
+    const user = await ensureAnonAuth();
+    await runTransaction(db, async (tx) => {
+      const sRef = doc(db, COL.sessions, sessionId);
+      const mRef = doc(db, COL.sessions, sessionId, COL.matches, matchId);
+      const sSnap = await tx.get(sRef);
+      const mSnap = await tx.get(mRef);
+      if (!sSnap.exists() || !mSnap.exists()) throw new Error("Missing session/match");
+      const s = sSnap.data() as Session;
+      if (s.hostUid !== user.uid) throw new Error("Not host");
+      tx.update(mRef, { scoreA, scoreB });
+    });
   });
 }
