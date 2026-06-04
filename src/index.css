@@ -3,8 +3,9 @@
 @tailwind utilities;
 
 :root {
-  font-family: "Google Sans", "Google Sans Text", -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
-  font-optical-sizing: none;
+  --app-font-family: "Google Sans", "Google Sans Text", "Noto Sans Thai", -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+  font-family: var(--app-font-family);
+  font-optical-sizing: auto;
   font-variation-settings: "GRAD" 0;
   color-scheme: dark;
   --transform-motion-duration: 600ms;
@@ -39,6 +40,7 @@ img {
 html {
   height: 100%;
   background: #0D2318;
+  font-family: var(--app-font-family);
 }
 
 body {
@@ -46,7 +48,7 @@ body {
   min-height: 100%;
   background: #0D2318;
   color: #fff;
-  font-family: inherit;
+  font-family: var(--app-font-family);
   -webkit-font-smoothing: antialiased;
   overscroll-behavior-y: none;
   text-rendering: optimizeLegibility;
@@ -61,6 +63,7 @@ input,
 select,
 textarea {
   font: inherit;
+  font-family: var(--app-font-family);
 }
 
 @media (hover: none) and (pointer: coarse) {
