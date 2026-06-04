@@ -1,4 +1,4 @@
-import { type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { nanoid } from "nanoid";
 import { ensureAnonAuth } from "../app/firebase";
 import { useAppStore } from "../app/store";
@@ -14,7 +14,6 @@ import {
   subscribeTeams,
   updateSessionCore,
 } from "../features/session/api";
-import { recoverSessionState } from "../features/session/recovery";
 import { buildInitialTeams } from "../engine/pairing";
 import { autoFillWaitingMatches, getMatchQueue } from "../engine/queue";
 import { teamPairKey } from "../engine/constraints";
@@ -43,17 +42,9 @@ type PendingAssign = {
   teamB: Team;
 };
 
-type RefreshPhase = "idle" | "holding" | "refreshing";
-
-type RefreshVisualState = {
-  phase: RefreshPhase;
-  progress: number;
-};
-
 const COURT_CARD_WIDTH = 283;
 const COURT_CARD_GAP = 12;
 const COURT_CARD_STEP = COURT_CARD_WIDTH + COURT_CARD_GAP;
-const REFRESH_HOLD_MS = 3000;
 
 export function Host(props: { sessionId: string; secret?: string }) {
   const [confirmHome, setConfirmHome] = useState(false);
@@ -66,8 +57,6 @@ export function Host(props: { sessionId: string; secret?: string }) {
   const [winnerTeamId, setWinnerTeamId] = useState("");
   const [showQr, setShowQr] = useState(false);
   const [activeCourtIndex, setActiveCourtIndex] = useState(0);
-  const [subscriptionEpoch, setSubscriptionEpoch] = useState(0);
-  const [refreshVisual, setRefreshVisual] = useState<RefreshVisualState>({ phase: "idle", progress: 0 });
   const currentMatchScrollRef = useRef<HTMLDivElement | null>(null);
   const currentMatchDragRef = useRef({ active: false, startX: 0, scrollLeft: 0 });
   const currentMatchSnapTimerRef = useRef<number | null>(null);
@@ -87,11 +76,11 @@ export function Host(props: { sessionId: string; secret?: string }) {
     ensureAnonAuth().catch(() => {});
   }, []);
 
-  useEffect(() => subscribeSession(props.sessionId, setSession), [props.sessionId, subscriptionEpoch]);
-  useEffect(() => subscribePlayers(props.sessionId, setPlayers), [props.sessionId, subscriptionEpoch]);
-  useEffect(() => subscribeTeams(props.sessionId, setTeams), [props.sessionId, subscriptionEpoch]);
-  useEffect(() => subscribeCourts(props.sessionId, setCourts), [props.sessionId, subscriptionEpoch]);
-  useEffect(() => subscribeMatches(props.sessionId, setMatches), [props.sessionId, subscriptionEpoch]);
+  useEffect(() => subscribeSession(props.sessionId, setSession), [props.sessionId]);
+  useEffect(() => subscribePlayers(props.sessionId, setPlayers), [props.sessionId]);
+  useEffect(() => subscribeTeams(props.sessionId, setTeams), [props.sessionId]);
+  useEffect(() => subscribeCourts(props.sessionId, setCourts), [props.sessionId]);
+  useEffect(() => subscribeMatches(props.sessionId, setMatches), [props.sessionId]);
 
   const matchById = useMemo(() => {
     const map = new Map(matches.map((match) => [match.id, match]));
@@ -233,49 +222,6 @@ export function Host(props: { sessionId: string; secret?: string }) {
     }
   };
 
-  const refreshSessionState = async () => {
-    try {
-      const recovery = await recoverSessionState(props.sessionId);
-      if (recovery.status === "failed") {
-        setToast({
-          id: nanoid(),
-          kind: "error",
-          message: recovery.issues[0] ? `Recovery failed: ${recovery.issues[0]}` : "Recovery failed. No valid snapshot exists.",
-        });
-        return;
-      }
-      const snapshot = recovery.state;
-
-      setSession(snapshot.session);
-      setPlayers(snapshot.players);
-      setTeams(snapshot.teams);
-      setCourts(snapshot.courts);
-      setMatches(snapshot.matches);
-      setActiveCourtIndex((index) => Math.min(index, Math.max(snapshot.courts.length - 1, 0)));
-
-      // Clear only local overlays and selections; persisted match data stays unchanged.
-      setPendingAssign(null);
-      setShowFinish(null);
-      setConfirmCancelMatch(null);
-      setConfirmResetPairing(false);
-      setConfirmResetAll(false);
-      setConfirmEndSession(false);
-      setWinnerTeamId("");
-
-      setSubscriptionEpoch((epoch) => epoch + 1);
-      setToast({
-        id: nanoid(),
-        kind: recovery.status === "restored" ? "info" : "success",
-        message:
-          recovery.status === "restored"
-            ? `Recovered latest valid game state. ${recovery.issues[0] ?? ""}`.trim()
-            : "State refreshed from saved data.",
-      });
-    } catch (error: any) {
-      setToast({ id: nanoid(), kind: "error", message: error?.message ?? "Failed to refresh state" });
-    }
-  };
-
   const getNextMatchTeams = () => {
     const next = queuePreview.find((row) => !!row.teamA && !!row.teamB);
     if (!next?.teamA || !next.teamB) return null;
@@ -337,11 +283,6 @@ export function Host(props: { sessionId: string; secret?: string }) {
     currentMatchSnapTimerRef.current = window.setTimeout(() => snapCurrentMatchScroll(element), 220);
   };
 
-  const refreshCardClass = (baseClassName: string) =>
-    `${baseClassName} ${refreshVisual.phase === "refreshing" ? "host-refresh-card" : ""}`;
-  const refreshCardStyle = (delayMs: number) =>
-    refreshVisual.phase === "refreshing" ? ({ animationDelay: `${delayMs}ms` } as CSSProperties) : undefined;
-
   return (
     <div className="min-h-[100dvh] bg-[#0D2318] text-white">
       <div className="mx-auto flex min-h-[100dvh] w-full max-w-[430px] flex-col px-4 pb-[max(24px,env(safe-area-inset-bottom))] pt-[max(16px,env(safe-area-inset-top))]">
@@ -352,13 +293,12 @@ export function Host(props: { sessionId: string; secret?: string }) {
           </div>
 
           <div className="flex items-center gap-2">
-            <LongPressRefreshButton onConfirm={refreshSessionState} onVisualStateChange={setRefreshVisual} />
             <HeaderActionButton onClick={() => setShowQr(true)}>QR</HeaderActionButton>
             <HeaderActionButton onClick={() => setConfirmHome(true)}>Exit</HeaderActionButton>
           </div>
         </header>
 
-        <section className={refreshCardClass("mt-6")} style={refreshCardStyle(0)}>
+        <section className="mt-6">
           <div className="max-w-[320px]">
             <h1 className="text-[48px] font-bold leading-[60px] tracking-[-0.03em] text-white">Match center</h1>
             <p className="mt-1 text-[16px] font-normal leading-5 text-white">Manage matches, player and queue.</p>
@@ -373,8 +313,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
 
         {!teams.length && (
           <SectionCard
-            className={refreshCardClass("mt-6")}
-            style={refreshCardStyle(70)}
+            className="mt-6"
             title="Session setup"
             right={<span className="text-[14px] text-white/50">{players.length} players</span>}
           >
@@ -389,15 +328,10 @@ export function Host(props: { sessionId: string; secret?: string }) {
           </SectionCard>
         )}
 
-        <TopThreePodium
-          players={podiumPlayers}
-          className={refreshVisual.phase === "refreshing" ? "host-refresh-card" : ""}
-          style={refreshCardStyle(teams.length ? 70 : 140)}
-        />
+        <TopThreePodium players={podiumPlayers} />
 
         <section
-          className={refreshCardClass("relative mt-6 h-[355px] overflow-hidden rounded-[20px] border border-white/5 bg-white/[0.05]")}
-          style={refreshCardStyle(teams.length ? 140 : 210)}
+          className="relative mt-6 h-[355px] overflow-hidden rounded-[20px] border border-white/5 bg-white/[0.05]"
         >
           <h2 className="absolute left-[19px] top-5 text-[16px] font-medium leading-5 text-white">Current match</h2>
           <div className="absolute right-5 top-5 text-right">
@@ -507,13 +441,10 @@ export function Host(props: { sessionId: string; secret?: string }) {
           rows={queuePreview}
           playerById={playerById}
           coverageCompleted={coverageCompleted}
-          className={refreshVisual.phase === "refreshing" ? "host-refresh-card" : ""}
-          style={refreshCardStyle(teams.length ? 210 : 280)}
         />
 
         <SectionCard
-          className={refreshCardClass("mt-6")}
-          style={refreshCardStyle(teams.length ? 280 : 350)}
+          className="mt-6"
           title={`Players (${players.length})`}
           right={<span className="text-[14px] text-white/50">{isLocked ? "Locked" : "Editable"}</span>}
         >
@@ -573,7 +504,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
           </div>
         </SectionCard>
 
-        <SectionCard className={refreshCardClass("mt-6")} style={refreshCardStyle(teams.length ? 350 : 420)} title="Session tools">
+        <SectionCard className="mt-6" title="Session tools">
           <div className="mt-2 grid grid-cols-2 gap-3">
             <ActionButton
               tone="ghost"
@@ -753,145 +684,6 @@ function HeaderActionButton(props: { children: string; onClick: () => void }) {
     >
       {props.children}
     </button>
-  );
-}
-
-function LongPressRefreshButton(props: {
-  onConfirm: () => Promise<void> | void;
-  onVisualStateChange: (state: RefreshVisualState) => void;
-}) {
-  const [phase, setPhase] = useState<RefreshPhase>("idle");
-  const [elapsed, setElapsed] = useState(0);
-  const holdingRef = useRef(false);
-  const intervalRef = useRef<number | null>(null);
-  const timeoutRef = useRef<number | null>(null);
-  const resetRef = useRef<number | null>(null);
-
-  const clearRefreshTimers = () => {
-    if (intervalRef.current != null) {
-      window.clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
-    if (timeoutRef.current != null) {
-      window.clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
-    }
-    if (resetRef.current != null) {
-      window.clearTimeout(resetRef.current);
-      resetRef.current = null;
-    }
-  };
-
-  const cancelHold = () => {
-    if (!holdingRef.current) return;
-    holdingRef.current = false;
-    clearRefreshTimers();
-    setElapsed(0);
-    setPhase("idle");
-    props.onVisualStateChange({ phase: "idle", progress: 0 });
-  };
-
-  const completeHold = async () => {
-    if (!holdingRef.current) return;
-    holdingRef.current = false;
-    clearRefreshTimers();
-    setElapsed(REFRESH_HOLD_MS);
-    setPhase("refreshing");
-    props.onVisualStateChange({ phase: "refreshing", progress: 1 });
-
-    try {
-      await props.onConfirm();
-    } finally {
-      resetRef.current = window.setTimeout(() => {
-        resetRef.current = null;
-        setElapsed(0);
-        setPhase("idle");
-        props.onVisualStateChange({ phase: "idle", progress: 0 });
-      }, 1300);
-    }
-  };
-
-  const startHold = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (phase !== "idle") return;
-
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    const startedAt = Date.now();
-    holdingRef.current = true;
-    setElapsed(0);
-    setPhase("holding");
-    props.onVisualStateChange({ phase: "holding", progress: 0 });
-
-    intervalRef.current = window.setInterval(() => {
-      const nextElapsed = Math.min(Date.now() - startedAt, REFRESH_HOLD_MS);
-      setElapsed(nextElapsed);
-      props.onVisualStateChange({ phase: "holding", progress: nextElapsed / REFRESH_HOLD_MS });
-    }, 80);
-    timeoutRef.current = window.setTimeout(() => void completeHold(), REFRESH_HOLD_MS);
-  };
-
-  useEffect(() => {
-    return () => {
-      holdingRef.current = false;
-      clearRefreshTimers();
-      props.onVisualStateChange({ phase: "idle", progress: 0 });
-    };
-  }, []);
-
-  const progress = phase === "holding" ? Math.min(elapsed / REFRESH_HOLD_MS, 1) : phase === "refreshing" ? 1 : 0;
-  const remainingSeconds = Math.max(1, Math.ceil((REFRESH_HOLD_MS - elapsed) / 1000));
-  const label = phase === "holding" ? `Hold ${remainingSeconds}s` : phase === "refreshing" ? "Refreshing..." : "Refresh";
-
-  return (
-    <button
-      type="button"
-      aria-label="Hold for 3 seconds to refresh saved session state"
-      title="Hold for 3 seconds to refresh saved session state"
-      disabled={phase === "refreshing"}
-      onPointerDown={startHold}
-      onPointerUp={cancelHold}
-      onPointerCancel={cancelHold}
-      onLostPointerCapture={cancelHold}
-      onClick={(event) => event.preventDefault()}
-      className={`relative flex h-9 min-w-[92px] items-center justify-center gap-1.5 overflow-hidden rounded-full border px-3 text-[13px] font-medium transition active:scale-[0.97] ${
-        phase === "holding"
-          ? "border-[#37B64B]/70 bg-[#37B64B]/10 text-white"
-          : "border-white/10 bg-white/[0.04] text-white/70 hover:text-white disabled:opacity-70"
-      }`}
-    >
-      <span
-        aria-hidden="true"
-        className="absolute inset-y-0 left-0 bg-[#37B64B]/25 transition-[width]"
-        style={{ width: `${Math.round(progress * 100)}%` }}
-      />
-      <span className={`relative flex-none ${phase === "refreshing" ? "animate-spin" : ""}`} aria-hidden="true">
-        <RefreshIcon />
-      </span>
-      <span className="relative whitespace-nowrap">{label}</span>
-    </button>
-  );
-}
-
-function RefreshIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 18 18" fill="none" aria-hidden="true">
-      <path
-        d="M14.4 7.2A5.5 5.5 0 0 0 4 5.6L2.7 7.1"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path d="M2.6 3.7V7.1H6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-      <path
-        d="M3.6 10.8A5.5 5.5 0 0 0 14 12.4l1.3-1.5"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path d="M15.4 14.3V10.9H12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
   );
 }
 
