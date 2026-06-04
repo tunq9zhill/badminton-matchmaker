@@ -230,6 +230,7 @@ function PlayerIdentity(props: { player: Player; compact?: boolean; onOpenImage:
           type="button"
           className={`${avatarSize} overflow-hidden rounded-full border border-slate-200`}
           onClick={() => props.onOpenImage(props.player.avatarDataUrl!)}
+          data-cornerkit-ignore
         >
           <img src={props.player.avatarDataUrl} alt={`avatar-${props.player.name}`} className="h-full w-full object-cover" />
         </button>
