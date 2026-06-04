@@ -288,7 +288,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
       <div className="mx-auto flex min-h-[100dvh] w-full max-w-[430px] flex-col px-4 pb-[max(24px,env(safe-area-inset-bottom))] pt-[max(16px,env(safe-area-inset-top))]">
         <header className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <img src={courtMateLogo} alt="CourtMate" className="h-10 w-10 rounded-[14px]" />
+            <img src={courtMateLogo} alt="CourtMate" className="h-10 w-10" data-cornerkit-ignore />
             <div className="text-[18.8px] font-semibold leading-6 tracking-[-0.02em] text-white">CourtMate</div>
           </div>
 
@@ -774,16 +774,18 @@ function PodiumCard(props: {
 
   return (
     <div
-      className={`absolute flex flex-col items-center rounded-t-[20px] border-x border-t border-white/5 px-3 text-center ${cardGradient} ${props.placementClassName}`}
+      className={`absolute text-center ${props.placementClassName}`}
     >
-      <div className={`absolute -top-4 flex h-8 w-8 items-center justify-center rounded-full text-[16px] font-medium leading-5 text-black ${badgeColor}`}>
+      <div className={`absolute left-1/2 top-[-16px] z-20 flex h-8 w-8 -translate-x-1/2 items-center justify-center rounded-full text-[16px] font-medium leading-5 text-black ${badgeColor}`}>
         {props.rank}
       </div>
-      <div className="mt-6 max-w-full truncate text-[16px] font-normal leading-5 text-white">{props.player?.name ?? "-"}</div>
-      <div className={`${props.compact ? "mt-[11px] text-[34px] leading-[43px]" : "mt-2 text-[50px] leading-[63px]"} font-normal text-[#37B64B]`}>
-        {props.player?.stats.wins ?? 0}
+      <div className={`relative z-0 flex h-full w-full flex-col items-center rounded-t-[20px] border-x border-t border-white/5 px-3 ${cardGradient}`}>
+        <div className="mt-6 max-w-full truncate text-[16px] font-normal leading-5 text-white">{props.player?.name ?? "-"}</div>
+        <div className={`${props.compact ? "mt-[11px] text-[34px] leading-[43px]" : "mt-2 text-[50px] leading-[63px]"} font-normal text-[#37B64B]`}>
+          {props.player?.stats.wins ?? 0}
+        </div>
+        <div className={`${props.compact ? "-mt-px" : "mt-[7px]"} text-[14px] font-normal leading-[18px] text-white/20`}>Wins</div>
       </div>
-      <div className={`${props.compact ? "-mt-px" : "mt-[7px]"} text-[14px] font-normal leading-[18px] text-white/20`}>Wins</div>
     </div>
   );
 }
