@@ -678,7 +678,6 @@ export function Landing() {
                           aria-label={`Edit profile image for ${player.name}`}
                           onClick={() => setAvatarEditorPlayerId(player.id)}
                           className="flex-none rounded-full transition-transform active:scale-[0.95]"
-                          data-cornerkit-ignore
                         >
                           <AvatarBadge
                             name={player.name}
@@ -1057,7 +1056,6 @@ function ScreenShell(props: { children: ReactNode; header: ReactNode; background
     <div
       className="app-screen-shell bg-[#0D2318] bg-cover bg-center bg-no-repeat text-white"
       style={props.backgroundImage ? { backgroundImage: `url(${props.backgroundImage})` } : undefined}
-      data-cornerkit-preserve-button-radius
     >
       <div className="relative mx-auto flex h-full w-full max-w-[430px] flex-col px-4">
         <div className="z-20 shrink-0 pt-[max(16px,env(safe-area-inset-top))]">{props.header}</div>
@@ -1085,7 +1083,7 @@ function CompactBrandHeader(props: { onBack: () => void; style?: CSSProperties }
       </button>
 
       <div className="flex items-center gap-2">
-        <img src={courtMateLogo} alt="CourtMate" className="h-[33px] w-[33px]" data-cornerkit-ignore />
+        <img src={courtMateLogo} alt="CourtMate" className="h-[33px] w-[33px]" />
         <div className="text-[18.8px] font-semibold leading-6 tracking-[-0.02em] text-white">CourtMate</div>
       </div>
     </div>
@@ -1095,7 +1093,7 @@ function CompactBrandHeader(props: { onBack: () => void; style?: CSSProperties }
 function HeroBrandHeader(props: { style?: CSSProperties }) {
   return (
     <header className="soft-fade-up flex h-14 items-center gap-3.5" style={props.style}>
-      <img src={courtMateLogo} alt="CourtMate" className="h-14 w-14 object-contain" data-cornerkit-ignore />
+      <img src={courtMateLogo} alt="CourtMate" className="h-14 w-14 object-contain" />
       <div className="text-[32px] font-semibold leading-10 text-white">CourtMate</div>
     </header>
   );

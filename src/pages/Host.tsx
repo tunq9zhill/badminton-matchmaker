@@ -297,7 +297,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
       <div className="mx-auto flex min-h-[100dvh] w-full max-w-[430px] flex-col px-4 pb-[max(24px,env(safe-area-inset-bottom))] pt-[max(16px,env(safe-area-inset-top))]">
         <header className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <img src={courtMateLogo} alt="CourtMate" className="h-10 w-10" data-cornerkit-ignore />
+            <img src={courtMateLogo} alt="CourtMate" className="h-10 w-10" />
             <div className="text-[18.8px] font-semibold leading-6 tracking-[-0.02em] text-white">CourtMate</div>
           </div>
 
