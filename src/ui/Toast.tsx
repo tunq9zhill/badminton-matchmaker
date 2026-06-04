@@ -1,7 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type TouchEvent } from "react";
 import { type Toast as ToastState, useAppStore } from "../app/store";
 
 const TOAST_EXIT_MS = 1000;
+const TOAST_SWIPE_UP_DISMISS_PX = 36;
+const TOAST_SWIPE_AXIS_TOLERANCE_PX = 16;
+
+function isMobileTouchPointer() {
+  return typeof window !== "undefined" && window.matchMedia("(hover: none) and (pointer: coarse)").matches;
+}
 
 export function Toast(props: { toast: ToastState }) {
   const setToast = useAppStore((s) => s.setToast);
@@ -9,6 +15,8 @@ export function Toast(props: { toast: ToastState }) {
   const isLeavingRef = useRef(false);
   const autoDismissTimerRef = useRef<number | null>(null);
   const exitTimerRef = useRef<number | null>(null);
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const touchSwipeHandledRef = useRef(false);
   const hasActions = !!props.toast.primaryAction || !!props.toast.secondaryAction;
 
   const dismissToast = useCallback(() => {
@@ -51,6 +59,46 @@ export function Toast(props: { toast: ToastState }) {
     [dismissToast],
   );
 
+  const handleTouchStart = useCallback((event: TouchEvent<HTMLDivElement>) => {
+    if (!isMobileTouchPointer() || event.touches.length !== 1) {
+      touchStartRef.current = null;
+      return;
+    }
+
+    const touch = event.touches[0];
+    touchStartRef.current = { x: touch.clientX, y: touch.clientY };
+    touchSwipeHandledRef.current = false;
+  }, []);
+
+  const handleTouchMove = useCallback(
+    (event: TouchEvent<HTMLDivElement>) => {
+      if (!touchStartRef.current) return;
+
+      event.preventDefault();
+
+      if (touchSwipeHandledRef.current || isLeavingRef.current) return;
+
+      const touch = event.touches[0];
+      if (!touch) return;
+
+      const deltaX = touch.clientX - touchStartRef.current.x;
+      const deltaY = touch.clientY - touchStartRef.current.y;
+      const isUpwardSwipe =
+        deltaY <= -TOAST_SWIPE_UP_DISMISS_PX && Math.abs(deltaY) > Math.abs(deltaX) + TOAST_SWIPE_AXIS_TOLERANCE_PX;
+
+      if (!isUpwardSwipe) return;
+
+      touchSwipeHandledRef.current = true;
+      dismissToast();
+    },
+    [dismissToast],
+  );
+
+  const handleTouchEnd = useCallback(() => {
+    touchStartRef.current = null;
+    touchSwipeHandledRef.current = false;
+  }, []);
+
   const tone =
     props.toast.kind === "error"
       ? {
@@ -83,7 +131,11 @@ export function Toast(props: { toast: ToastState }) {
     >
       <div
         role={props.toast.kind === "error" ? "alert" : "status"}
-        className={`${isLeaving ? "toast-move-out" : "toast-move-in"} pointer-events-auto relative mx-auto flex min-h-[88px] w-full max-w-[430px] items-start gap-4 overflow-hidden rounded-[16px] border border-white/5 bg-[#222B33] px-[18px] py-[18px] text-white shadow-[0_18px_50px_rgba(0,0,0,0.28)]`}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchEnd}
+        className={`${isLeaving ? "toast-move-out" : "toast-move-in"} toast-touch-dismiss pointer-events-auto relative mx-auto flex min-h-[88px] w-full max-w-[430px] items-start gap-4 overflow-hidden rounded-[16px] border border-white/5 bg-[#222B33] px-[18px] py-[18px] text-white shadow-[0_18px_50px_rgba(0,0,0,0.28)]`}
       >
         <span className="pointer-events-none absolute inset-0" style={tone.accentStyle} aria-hidden="true" />
         <span className={`relative mt-1 grid h-7 w-7 flex-none place-items-center rounded-full ring-8 ${tone.iconClass} ${tone.ringClass}`}>

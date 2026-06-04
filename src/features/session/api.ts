@@ -8,9 +8,6 @@ import { sha256Base64 } from "../../app/hash";
 import type { Session, Player, Team, Court, Match } from "../../app/types";
 import { COL, type ResultRow } from "./schema";
 import { deleteDoc } from "firebase/firestore";
-import { commitGameState } from "./recovery";
-
-export { readSessionState } from "./recovery";
 
 
 export async function createSession(params: { courtCount: number; oddMode: "three_player_rotation" | "none" }) {
@@ -111,17 +108,15 @@ export async function assertHost(sessionId: string) {
 }
 
 export async function upsertPlayers(sessionId: string, names: string[]) {
-  await commitGameState(sessionId, "upsert-players", async () => {
-    await assertHost(sessionId);
-    const b = writeBatch(db);
-    const now = Date.now();
-    for (const [index, name] of names.entries()) {
-      const id = nanoid(8);
-      const p: Player = { id, name: name.trim(), createdAt: now + index, stats: { played: 0, wins: 0, losses: 0 } };
-      b.set(doc(db, COL.sessions, sessionId, COL.players, id), p);
-    }
-    await b.commit();
-  });
+  await assertHost(sessionId);
+  const b = writeBatch(db);
+  const now = Date.now();
+  for (const [index, name] of names.entries()) {
+    const id = nanoid(8);
+    const p: Player = { id, name: name.trim(), createdAt: now + index, stats: { played: 0, wins: 0, losses: 0 } };
+    b.set(doc(db, COL.sessions, sessionId, COL.players, id), p);
+  }
+  await b.commit();
 }
 
 export async function addPlayers(sessionId: string, players: Array<{ name: string; avatarDataUrl?: string }>) {
@@ -147,17 +142,15 @@ export async function addPlayers(sessionId: string, players: Array<{ name: strin
 
 export async function addPlayer(sessionId: string, payload: { name: string; avatarDataUrl?: string }) {
   const id = nanoid(8);
-  await commitGameState(sessionId, "add-player", async () => {
-    await assertHost(sessionId);
-    const p: Player = {
-      id,
-      name: payload.name.trim(),
-      createdAt: Date.now(),
-      stats: { played: 0, wins: 0, losses: 0 },
-    };
-    if (payload.avatarDataUrl) p.avatarDataUrl = payload.avatarDataUrl;
-    await setDoc(doc(db, COL.sessions, sessionId, COL.players, id), p);
-  });
+  await assertHost(sessionId);
+  const p: Player = {
+    id,
+    name: payload.name.trim(),
+    createdAt: Date.now(),
+    stats: { played: 0, wins: 0, losses: 0 },
+  };
+  if (payload.avatarDataUrl) p.avatarDataUrl = payload.avatarDataUrl;
+  await setDoc(doc(db, COL.sessions, sessionId, COL.players, id), p);
   return id;
 }
 
@@ -203,17 +196,13 @@ export async function updateSessionCore(sessionId: string, patch: Partial<Sessio
 }
 
 export async function updatePlayerAvatar(sessionId: string, playerId: string, avatarDataUrl?: string) {
-  await commitGameState(sessionId, "update-player-avatar", async () => {
-    await assertHost(sessionId);
-    await updateDoc(doc(db, COL.sessions, sessionId, COL.players, playerId), {
-      avatarDataUrl: avatarDataUrl ?? null,
-    });
+  await assertHost(sessionId);
+  await updateDoc(doc(db, COL.sessions, sessionId, COL.players, playerId), {
+    avatarDataUrl: avatarDataUrl ?? null,
   });
 }
 
 export async function deletePlayer(sessionId: string, playerId: string) {
-  await commitGameState(sessionId, "delete-player", async () => {
-    await assertHost(sessionId);
-    await deleteDoc(doc(db, COL.sessions, sessionId, COL.players, playerId));
-  });
+  await assertHost(sessionId);
+  await deleteDoc(doc(db, COL.sessions, sessionId, COL.players, playerId));
 }

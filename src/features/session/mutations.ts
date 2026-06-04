@@ -19,7 +19,6 @@ import {
   rebuildMatchQueue,
   removeQueueItem,
 } from "../../engine/queue";
-import { commitGameState } from "./recovery";
 
 
 function uniq(arr: string[]) {
@@ -102,14 +101,13 @@ export async function setTeamsAndQueue(sessionId: string, teams: Team[], baseSes
 }
 
 export async function assignNextForCourt(sessionId: string, courtId: string, options: AssignNextOptions = {}) {
-  await commitGameState(sessionId, "assign-next", async () => {
-    const user = await ensureAnonAuth();
-    const teamsSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.teams));
-    const teamsAll = teamsSnap.docs.map((d) => d.data() as Team);
+  const user = await ensureAnonAuth();
+  const teamsSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.teams));
+  const teamsAll = teamsSnap.docs.map((d) => d.data() as Team);
 
-    const sRef = doc(db, COL.sessions, sessionId);
+  const sRef = doc(db, COL.sessions, sessionId);
 
-    await runTransaction(db, async (tx) => {
+  await runTransaction(db, async (tx) => {
       const sSnap2 = await tx.get(sRef);
       const cRef = doc(db, COL.sessions, sessionId, COL.courts, courtId);
       const cSnap = await tx.get(cRef);
@@ -183,15 +181,13 @@ export async function assignNextForCourt(sessionId: string, courtId: string, opt
       });
 
       tx.update(cRef, { currentMatchId: matchId });
-    });
   });
 }
 
 
 export async function beginMatch(sessionId: string, matchId: string) {
-  await commitGameState(sessionId, "begin-match", async () => {
-    const user = await ensureAnonAuth();
-    await runTransaction(db, async (tx) => {
+  const user = await ensureAnonAuth();
+  await runTransaction(db, async (tx) => {
       const sRef = doc(db, COL.sessions, sessionId);
       const mRef = doc(db, COL.sessions, sessionId, COL.matches, matchId);
       const sSnap = await tx.get(sRef);
@@ -202,15 +198,13 @@ export async function beginMatch(sessionId: string, matchId: string) {
       const m = mSnap.data() as Match;
       if (m.status !== "scheduled") return;
       tx.update(mRef, { status: "in_progress", startedAt: Date.now() });
-    });
   });
 }
 
 export async function cancelMatchAndReschedule(sessionId: string, matchId: string) {
-  await commitGameState(sessionId, "cancel-match", async () => {
-    const user = await ensureAnonAuth();
+  const user = await ensureAnonAuth();
 
-    await runTransaction(db, async (tx) => {
+  await runTransaction(db, async (tx) => {
       const sRef = doc(db, COL.sessions, sessionId);
       const mRef = doc(db, COL.sessions, sessionId, COL.matches, matchId);
 
@@ -247,7 +241,6 @@ export async function cancelMatchAndReschedule(sessionId: string, matchId: strin
       const cRef = doc(db, COL.sessions, sessionId, COL.courts, m.courtId);
       tx.update(cRef, { currentMatchId: null });
       tx.delete(mRef);
-    });
   });
 
 }
@@ -261,12 +254,11 @@ export async function finishMatch(
     scoreB?: number;
   }
 ) {
-  await commitGameState(sessionId, "finish-match", async () => {
-    const user = await ensureAnonAuth();
-    const teamsSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.teams));
-    const teamsAll = teamsSnap.docs.map((d) => d.data() as Team);
+  const user = await ensureAnonAuth();
+  const teamsSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.teams));
+  const teamsAll = teamsSnap.docs.map((d) => d.data() as Team);
 
-    await runTransaction(db, async (tx) => {
+  await runTransaction(db, async (tx) => {
     const sRef = doc(db, COL.sessions, sessionId);
     const mRef = doc(db, COL.sessions, sessionId, COL.matches, matchId);
 
@@ -416,15 +408,13 @@ export async function finishMatch(
 
     // clear court current match
     tx.update(doc(db, COL.sessions, sessionId, COL.courts, m.courtId), { currentMatchId: null });
-    });
   });
 }
 
 
 
 export async function resetTableStats(sessionId: string) {
-  await commitGameState(sessionId, "reset-table-stats", async () => {
-    const user = await ensureAnonAuth();
+  const user = await ensureAnonAuth();
     const sRef = doc(db, COL.sessions, sessionId);
     const sSnap = await getDoc(sRef);
     if (!sSnap.exists()) throw new Error("Missing session");
@@ -437,15 +427,13 @@ export async function resetTableStats(sessionId: string) {
       b.update(d.ref, { stats: { played: 0, wins: 0, losses: 0 }, playHistory: [] });
     });
     await b.commit();
-  });
 }
 
 
 export async function resetPairing(sessionId: string) {
-  return commitGameState(sessionId, "reset-pairing", async () => {
-    const user = await ensureAnonAuth();
+  const user = await ensureAnonAuth();
 
-    // Read snapshot
+  // Read current session data.
     const sRef = doc(db, COL.sessions, sessionId);
     const sSnap = await getDoc(sRef);
     if (!sSnap.exists()) throw new Error("Missing session");
@@ -502,12 +490,10 @@ export async function resetPairing(sessionId: string) {
     });
 
     return { warnings };
-  });
 }
 
 export async function resetAll(sessionId: string, keepNames: boolean) {
-  await commitGameState(sessionId, "reset-all", async () => {
-    const user = await ensureAnonAuth();
+  const user = await ensureAnonAuth();
 
     const sRef = doc(db, COL.sessions, sessionId);
     const sSnap = await getDoc(sRef);
@@ -548,7 +534,6 @@ export async function resetAll(sessionId: string, keepNames: boolean) {
     } as any);
 
     await b.commit();
-  });
 }
 
 export async function endSession(sessionId: string) {
@@ -584,9 +569,8 @@ export async function endSession(sessionId: string) {
 }
 
 export async function updateMatchScore(sessionId: string, matchId: string, scoreA: number, scoreB: number) {
-  await commitGameState(sessionId, "update-match-score", async () => {
-    const user = await ensureAnonAuth();
-    await runTransaction(db, async (tx) => {
+  const user = await ensureAnonAuth();
+  await runTransaction(db, async (tx) => {
       const sRef = doc(db, COL.sessions, sessionId);
       const mRef = doc(db, COL.sessions, sessionId, COL.matches, matchId);
       const sSnap = await tx.get(sRef);
@@ -595,6 +579,5 @@ export async function updateMatchScore(sessionId: string, matchId: string, score
       const s = sSnap.data() as Session;
       if (s.hostUid !== user.uid) throw new Error("Not host");
       tx.update(mRef, { scoreA, scoreB });
-    });
   });
 }
