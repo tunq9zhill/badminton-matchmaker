@@ -2,9 +2,9 @@ import { nanoid } from "nanoid";
 import {
   doc, collection, runTransaction, writeBatch, updateDoc
 } from "firebase/firestore";
-import type { DocumentReference } from "firebase/firestore";
+import type { DocumentReference, Transaction } from "firebase/firestore";
 import { db, ensureAnonAuth } from "../../app/firebase";
-import type { Match, Player, Session, Team } from "../../app/types";
+import type { Court, Match, MatchQueueItem, Player, Session, Team } from "../../app/types";
 import { COL, type ResultRow } from "./schema";
 import { getDoc, getDocs } from "firebase/firestore";
 import { rebuildTeamsAvoidingTeammates, teammateHistoryFromTeams } from "../../engine/pairing";
@@ -25,13 +25,117 @@ function uniq(arr: string[]) {
   return Array.from(new Set(arr));
 }
 
-function removeFrom(arr: string[], ids: string[]) {
-  const set = new Set(ids);
-  return arr.filter((x) => !set.has(x));
-}
-
 function addTo(arr: string[], ids: string[]) {
   return uniq([...arr, ...ids]);
+}
+
+function sameIdSet(a: string[], b: string[]) {
+  if (a.length !== b.length) return false;
+  const bSet = new Set(b);
+  return a.every((id) => bSet.has(id));
+}
+
+function isLiveMatch(match: Match) {
+  return match.status === "scheduled" || match.status === "in_progress";
+}
+
+async function getCourtRefs(sessionId: string) {
+  const courtsSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.courts));
+  return courtsSnap.docs.map((courtDoc) => courtDoc.ref);
+}
+
+function ensureRef(refs: DocumentReference[], ref: DocumentReference) {
+  return refs.some((candidate) => candidate.path === ref.path) ? refs : [...refs, ref];
+}
+
+async function readCourtState(
+  tx: Transaction,
+  sessionId: string,
+  courtRefs: DocumentReference[],
+  excludeMatchIds: string[] = [],
+) {
+  const excluded = new Set(excludeMatchIds);
+  const courtSnaps = await Promise.all(courtRefs.map((ref) => tx.get(ref)));
+  const courts = courtSnaps.filter((snap) => snap.exists()).map((snap) => snap.data() as Court);
+  const matchIds = uniq(
+    courts
+      .map((court) => court.currentMatchId)
+      .filter((id): id is string => !!id),
+  );
+  const matchRefs = matchIds.map((id) => doc(db, COL.sessions, sessionId, COL.matches, id));
+  const matchSnaps = await Promise.all(matchRefs.map((ref) => tx.get(ref)));
+  const matchById = new Map<string, Match>();
+
+  matchSnaps.forEach((snap, index) => {
+    if (!snap.exists()) return;
+    matchById.set(matchIds[index], snap.data() as Match);
+  });
+
+  const activeTeamIds: string[] = [];
+  for (const court of courts) {
+    const matchId = court.currentMatchId;
+    if (!matchId || excluded.has(matchId)) continue;
+    const match = matchById.get(matchId);
+    if (!match || !isLiveMatch(match)) continue;
+    activeTeamIds.push(match.teamAId, match.teamBId);
+  }
+
+  return { courts, matchById, activeTeamIds: uniq(activeTeamIds) };
+}
+
+function teamsWithCanonicalActivity(teams: Team[], activeTeamIds: string[]) {
+  const activeSet = new Set(activeTeamIds);
+  return teams.map((team) => ({ ...team, isActive: activeSet.has(team.id) }));
+}
+
+function appendMissingIdleTeams(
+  queue: MatchQueueItem[],
+  teams: Team[],
+  activeTeamIds: string[],
+  now: number,
+) {
+  const activeSet = new Set(activeTeamIds);
+  const queuedTeamIds = new Set<string>();
+  const next = [...queue];
+
+  for (const item of next) {
+    queuedTeamIds.add(item.teamAId);
+    if (item.teamBId) queuedTeamIds.add(item.teamBId);
+  }
+
+  teams
+    .filter((team) => !team.archived && !activeSet.has(team.id) && !queuedTeamIds.has(team.id))
+    .forEach((team, index) => {
+      queuedTeamIds.add(team.id);
+      next.push({
+        id: nanoid(10),
+        teamAId: team.id,
+        teamBId: null,
+        isFallback: false,
+        createdAt: now + index,
+      });
+    });
+
+  return next;
+}
+
+function writeInactiveRepairs(
+  tx: Transaction,
+  sessionId: string,
+  teams: Team[],
+  session: Session,
+  activeTeamIds: string[],
+  skipTeamIds: string[] = [],
+) {
+  const activeSet = new Set(activeTeamIds);
+  const previousActiveSet = new Set(session.activeTeams);
+  const skipSet = new Set(skipTeamIds);
+
+  for (const team of teams) {
+    if (skipSet.has(team.id) || activeSet.has(team.id)) continue;
+    if (!team.isActive && !previousActiveSet.has(team.id)) continue;
+    tx.update(doc(db, COL.sessions, sessionId, COL.teams, team.id), { isActive: false });
+  }
 }
 
 type AssignNextOptions = {
@@ -54,6 +158,11 @@ function defaultPlayedIds(team: Team) {
   if (team.playerIds.length <= 2) return team.playerIds;
   const start = (team.rotationIndex ?? 0) % team.playerIds.length;
   return [team.playerIds[start], team.playerIds[(start + 1) % team.playerIds.length]];
+}
+
+function playedIdsForFinish(team: Team, selected: string[] | undefined, label: string) {
+  if (team.playerIds.length < 3) return team.playerIds;
+  return playedIdsForAssign(team, selected ?? defaultPlayedIds(team), label);
 }
 
 export async function startOnce(sessionId: string) {
@@ -102,21 +211,38 @@ export async function setTeamsAndQueue(sessionId: string, teams: Team[], baseSes
 
 export async function assignNextForCourt(sessionId: string, courtId: string, options: AssignNextOptions = {}) {
   const user = await ensureAnonAuth();
-  const teamsSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.teams));
+  const [teamsSnap, baseCourtRefs] = await Promise.all([
+    getDocs(collection(db, COL.sessions, sessionId, COL.teams)),
+    getCourtRefs(sessionId),
+  ]);
   const teamsAll = teamsSnap.docs.map((d) => d.data() as Team);
 
   const sRef = doc(db, COL.sessions, sessionId);
+  const cRef = doc(db, COL.sessions, sessionId, COL.courts, courtId);
+  const courtRefs = ensureRef(baseCourtRefs, cRef);
 
   await runTransaction(db, async (tx) => {
       const sSnap2 = await tx.get(sRef);
-      const cRef = doc(db, COL.sessions, sessionId, COL.courts, courtId);
-      const cSnap = await tx.get(cRef);
 
-      if (!sSnap2.exists() || !cSnap.exists()) throw new Error("Missing session/court");
+      if (!sSnap2.exists()) throw new Error("Missing session");
       const s2 = sSnap2.data() as Session;
       if (s2.hostUid !== user.uid) throw new Error("Not host");
 
-      const queue = autoFillWaitingMatches(getMatchQueue(s2), s2, teamsAll);
+      const courtState = await readCourtState(tx, sessionId, courtRefs);
+      const targetCourt = courtState.courts.find((court) => court.id === courtId);
+      if (!targetCourt) throw new Error("Missing court");
+
+      const targetMatch = targetCourt.currentMatchId ? courtState.matchById.get(targetCourt.currentMatchId) : undefined;
+      if (targetMatch && isLiveMatch(targetMatch)) {
+        throw new Error(`Court ${courtId} already has an active match.`);
+      }
+
+      const canonicalSession = { ...s2, activeTeams: courtState.activeTeamIds };
+      const teamsForQueue = teamsWithCanonicalActivity(teamsAll, courtState.activeTeamIds);
+      const queueNeedsRepair = !sameIdSet(s2.activeTeams, courtState.activeTeamIds);
+      const queue = queueNeedsRepair
+        ? rebuildMatchQueue(canonicalSession, teamsForQueue)
+        : autoFillWaitingMatches(getMatchQueue(canonicalSession), canonicalSession, teamsForQueue);
       const firstReady = queue.find((item) => !!item.teamBId) ?? null;
       const queuedMatch =
         options.expectedTeamAId && options.expectedTeamBId
@@ -124,8 +250,7 @@ export async function assignNextForCourt(sessionId: string, courtId: string, opt
           : firstReady;
 
       if (!queuedMatch?.teamBId) {
-        tx.update(cRef, { currentMatchId: null });
-        return;
+        throw new Error("No available match to assign.");
       }
       const originalQueueIndex = queue.findIndex((item) => item.id === queuedMatch.id);
 
@@ -147,12 +272,14 @@ export async function assignNextForCourt(sessionId: string, courtId: string, opt
       const a = aSnap.data() as Team;
       const b = bSnap.data() as Team;
 
-      // Strict constraints: must be inactive and not in activeTeams
-      if (a.isActive || b.isActive) return;
-      if (s2.activeTeams.includes(a.id) || s2.activeTeams.includes(b.id)) return;
+      const activeTeamSet = new Set(courtState.activeTeamIds);
+      if (activeTeamSet.has(a.id) || activeTeamSet.has(b.id)) {
+        throw new Error("This match is no longer available.");
+      }
 
       const teamAPlayed = playedIdsForAssign(a, options.teamAPlayedPlayerIds, "Team A");
       const teamBPlayed = playedIdsForAssign(b, options.teamBPlayedPlayerIds, "Team B");
+      const nextActiveTeams = addTo(courtState.activeTeamIds, [a.id, b.id]);
 
       const matchId = nanoid(10);
       const m: Match = {
@@ -176,9 +303,10 @@ export async function assignNextForCourt(sessionId: string, courtId: string, opt
       tx.update(bRef, { isActive: true });
 
       tx.update(sRef, {
-        activeTeams: addTo(s2.activeTeams, [a.id, b.id]),
+        activeTeams: nextActiveTeams,
         ...queueSessionPatch(removeQueueItem(queue, queuedMatch.id)),
       });
+      writeInactiveRepairs(tx, sessionId, teamsAll, s2, nextActiveTeams, [a.id, b.id]);
 
       tx.update(cRef, { currentMatchId: matchId });
   });
@@ -203,6 +331,11 @@ export async function beginMatch(sessionId: string, matchId: string) {
 
 export async function cancelMatchAndReschedule(sessionId: string, matchId: string) {
   const user = await ensureAnonAuth();
+  const [teamsSnap, courtRefs] = await Promise.all([
+    getDocs(collection(db, COL.sessions, sessionId, COL.teams)),
+    getCourtRefs(sessionId),
+  ]);
+  const teamsAll = teamsSnap.docs.map((d) => d.data() as Team);
 
   await runTransaction(db, async (tx) => {
       const sRef = doc(db, COL.sessions, sessionId);
@@ -215,8 +348,9 @@ export async function cancelMatchAndReschedule(sessionId: string, matchId: strin
       const s = sSnap.data() as Session;
       if (s.hostUid !== user.uid) throw new Error("Not host");
       const m = mSnap.data() as Match;
+      const courtState = await readCourtState(tx, sessionId, courtRefs, [matchId]);
       const returnedTeamIds = [m.teamAId, m.teamBId];
-      const nextActiveTeams = removeFrom(s.activeTeams, returnedTeamIds);
+      const nextActiveTeams = courtState.activeTeamIds;
       const restoredQueueItem = m.originalQueueItem ?? {
         id: nanoid(10),
         teamAId: m.teamAId,
@@ -224,18 +358,25 @@ export async function cancelMatchAndReschedule(sessionId: string, matchId: strin
         isFallback: m.isFallback ?? false,
         createdAt: m.createdAt,
       };
-      const restoredQueue = insertQueueItemAt(getMatchQueue(s), restoredQueueItem, m.originalQueueIndex ?? 0);
+      const restoredQueue = appendMissingIdleTeams(
+        insertQueueItemAt(getMatchQueue({ ...s, activeTeams: nextActiveTeams }), restoredQueueItem, m.originalQueueIndex ?? 0),
+        teamsWithCanonicalActivity(teamsAll, nextActiveTeams),
+        nextActiveTeams,
+        Date.now(),
+      );
+      const nextActiveTeamSet = new Set(nextActiveTeams);
 
       // teams become inactive
       const aRef = doc(db, COL.sessions, sessionId, COL.teams, m.teamAId);
       const bRef = doc(db, COL.sessions, sessionId, COL.teams, m.teamBId);
-      tx.update(aRef, { isActive: false });
-      tx.update(bRef, { isActive: false });
+      tx.update(aRef, { isActive: nextActiveTeamSet.has(m.teamAId) });
+      tx.update(bRef, { isActive: nextActiveTeamSet.has(m.teamBId) });
 
       tx.update(sRef, {
         activeTeams: nextActiveTeams,
         ...queueSessionPatch(restoredQueue),
       });
+      writeInactiveRepairs(tx, sessionId, teamsAll, s, nextActiveTeams, returnedTeamIds);
 
       // clear court current match (reschedule will set new)
       const cRef = doc(db, COL.sessions, sessionId, COL.courts, m.courtId);
@@ -255,7 +396,10 @@ export async function finishMatch(
   }
 ) {
   const user = await ensureAnonAuth();
-  const teamsSnap = await getDocs(collection(db, COL.sessions, sessionId, COL.teams));
+  const [teamsSnap, courtRefs] = await Promise.all([
+    getDocs(collection(db, COL.sessions, sessionId, COL.teams)),
+    getCourtRefs(sessionId),
+  ]);
   const teamsAll = teamsSnap.docs.map((d) => d.data() as Team);
 
   await runTransaction(db, async (tx) => {
@@ -273,6 +417,8 @@ export async function finishMatch(
 
     const m = mSnap.data() as Match;
     if (m.status === "finished" || m.status === "canceled") return;
+    if (winnerTeamId !== m.teamAId && winnerTeamId !== m.teamBId) throw new Error("Choose a winning team.");
+    const courtState = await readCourtState(tx, sessionId, courtRefs, [matchId]);
 
     const aRef = doc(db, COL.sessions, sessionId, COL.teams, m.teamAId);
     const bRef = doc(db, COL.sessions, sessionId, COL.teams, m.teamBId);
@@ -287,13 +433,8 @@ export async function finishMatch(
     const bWin = winnerTeamId === teamB.id;
 
     // The active pair is chosen before assigning a 3-player team to court.
-    const teamAPlayed =
-      m.teamAPlayedPlayerIds ??
-      defaultPlayedIds(teamA);
-
-    const teamBPlayed =
-      m.teamBPlayedPlayerIds ??
-      defaultPlayedIds(teamB);
+    const teamAPlayed = playedIdsForFinish(teamA, m.teamAPlayedPlayerIds, "Team A");
+    const teamBPlayed = playedIdsForFinish(teamB, m.teamBPlayedPlayerIds, "Team B");
 
     // pre-read all player docs that we will update
     const playerRefs = [...teamAPlayed, ...teamBPlayed].map((pid) =>
@@ -315,6 +456,12 @@ export async function finishMatch(
       wins: teamB.stats.wins + (bWin ? 1 : 0),
       losses: teamB.stats.losses + (bWin ? 0 : 1),
     };
+    const nextTeamARotationIndex =
+      teamA.playerIds.length === 3 ? ((teamA.rotationIndex ?? 0) + 1) % 3 : teamA.rotationIndex;
+    const nextTeamBRotationIndex =
+      teamB.playerIds.length === 3 ? ((teamB.rotationIndex ?? 0) + 1) % 3 : teamB.rotationIndex;
+    const nextActiveTeams = courtState.activeTeamIds;
+    const nextActiveTeamSet = new Set(nextActiveTeams);
 
     // match update (include scores here)
     tx.update(mRef, {
@@ -329,17 +476,17 @@ export async function finishMatch(
 
     // team stats + inactive
     tx.update(aRef, {
-      isActive: false,
+      isActive: nextActiveTeamSet.has(teamA.id),
       stats: nextTeamAStats,
       rotationIndex:
-        teamA.playerIds.length === 3 ? ((teamA.rotationIndex ?? 0) + 1) % 3 : (teamA.rotationIndex ?? null),
+        nextTeamARotationIndex ?? null,
     });
 
     tx.update(bRef, {
-      isActive: false,
+      isActive: nextActiveTeamSet.has(teamB.id),
       stats: nextTeamBStats,
       rotationIndex:
-        teamB.playerIds.length === 3 ? ((teamB.rotationIndex ?? 0) + 1) % 3 : (teamB.rotationIndex ?? null),
+        nextTeamBRotationIndex ?? null,
     });
 
     // player stats update (only those who played)
@@ -365,12 +512,25 @@ export async function finishMatch(
     // metHistory
     const metKey = [m.teamAId, m.teamBId].sort().join("__");
     const nextMetHistory: Session["metHistory"] = { ...s.metHistory, [metKey]: true };
-    const returnedTeamIds = [m.teamAId, m.teamBId];
-    const nextActiveTeams = removeFrom(s.activeTeams, returnedTeamIds);
+    const returnedTeamIds = [m.teamAId, m.teamBId].filter((teamId) => !nextActiveTeamSet.has(teamId));
     const teamsForQueue = teamsAll.map((team) => {
-      if (team.id === teamA.id) return { ...teamA, isActive: false, stats: nextTeamAStats };
-      if (team.id === teamB.id) return { ...teamB, isActive: false, stats: nextTeamBStats };
-      return team;
+      if (team.id === teamA.id) {
+        return {
+          ...teamA,
+          isActive: nextActiveTeamSet.has(teamA.id),
+          stats: nextTeamAStats,
+          rotationIndex: nextTeamARotationIndex,
+        };
+      }
+      if (team.id === teamB.id) {
+        return {
+          ...teamB,
+          isActive: nextActiveTeamSet.has(teamB.id),
+          stats: nextTeamBStats,
+          rotationIndex: nextTeamBRotationIndex,
+        };
+      }
+      return { ...team, isActive: nextActiveTeamSet.has(team.id) };
     });
     const sessionForQueue = {
       ...s,
@@ -389,6 +549,7 @@ export async function finishMatch(
       phase: nextPhase(s.phase, teamsForQueue),
       ...queueSessionPatch(queue),
     });
+    writeInactiveRepairs(tx, sessionId, teamsAll, s, nextActiveTeams, [m.teamAId, m.teamBId]);
 
     // result row
     const r: ResultRow = {

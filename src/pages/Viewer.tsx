@@ -11,6 +11,10 @@ import type { Match, Player, Session, Team, Court } from "../app/types";
 import type { ResultRow } from "../features/session/schema";
 import { autoFillWaitingMatches, getMatchQueue } from "../engine/queue";
 
+function isLiveCourtMatch(match: Match | undefined) {
+  return !!match && (match.status === "scheduled" || match.status === "in_progress");
+}
+
 export function Viewer(props: { sessionId: string }) {
   const conn = useFirestoreConnectionPing();
 
@@ -91,7 +95,8 @@ export function Viewer(props: { sessionId: string }) {
         <CardHeader title="Courts" />
         <CardBody className="space-y-3">
           {courts.map((c) => {
-            const m = c.currentMatchId ? matchById.get(c.currentMatchId) : undefined;
+            const currentMatch = c.currentMatchId ? matchById.get(c.currentMatchId) : undefined;
+            const m = isLiveCourtMatch(currentMatch) ? currentMatch : undefined;
             const a = m ? teamById.get(m.teamAId) : undefined;
             const b = m ? teamById.get(m.teamBId) : undefined;
             return (
@@ -230,7 +235,6 @@ function PlayerIdentity(props: { player: Player; compact?: boolean; onOpenImage:
           type="button"
           className={`${avatarSize} overflow-hidden rounded-full border border-slate-200`}
           onClick={() => props.onOpenImage(props.player.avatarDataUrl!)}
-          data-cornerkit-ignore
         >
           <img src={props.player.avatarDataUrl} alt={`avatar-${props.player.name}`} className="h-full w-full object-cover" />
         </button>

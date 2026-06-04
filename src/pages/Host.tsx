@@ -46,6 +46,10 @@ const COURT_CARD_WIDTH = 283;
 const COURT_CARD_GAP = 12;
 const COURT_CARD_STEP = COURT_CARD_WIDTH + COURT_CARD_GAP;
 
+function isLiveCourtMatch(match: Match | undefined) {
+  return !!match && (match.status === "scheduled" || match.status === "in_progress");
+}
+
 export function Host(props: { sessionId: string; secret?: string }) {
   const [confirmHome, setConfirmHome] = useState(false);
   const [confirmEndSession, setConfirmEndSession] = useState(false);
@@ -54,6 +58,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
   const [confirmCancelMatch, setConfirmCancelMatch] = useState<{ matchId: string; courtId: string } | null>(null);
   const [showFinish, setShowFinish] = useState<{ match: Match } | null>(null);
   const [pendingAssign, setPendingAssign] = useState<PendingAssign | null>(null);
+  const [assigningCourtId, setAssigningCourtId] = useState<string | null>(null);
   const [winnerTeamId, setWinnerTeamId] = useState("");
   const [showQr, setShowQr] = useState(false);
   const [activeCourtIndex, setActiveCourtIndex] = useState(0);
@@ -245,6 +250,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
 
   const handleAssignNext = async (courtId: string) => {
     if (!session?.locked) return;
+    if (assigningCourtId) return;
 
     const next = getNextMatchTeams();
     if (!next) {
@@ -258,10 +264,13 @@ export function Host(props: { sessionId: string; secret?: string }) {
     }
 
     try {
+      setAssigningCourtId(courtId);
       await assignPreparedMatch(courtId, next.teamA, next.teamB);
       setToast({ id: nanoid(), kind: "success", message: "Match assigned." });
     } catch (error: any) {
       setToast({ id: nanoid(), kind: "error", message: error?.message ?? "Failed to assign next match" });
+    } finally {
+      setAssigningCourtId(null);
     }
   };
 
@@ -288,7 +297,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
       <div className="mx-auto flex min-h-[100dvh] w-full max-w-[430px] flex-col px-4 pb-[max(24px,env(safe-area-inset-bottom))] pt-[max(16px,env(safe-area-inset-top))]">
         <header className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <img src={courtMateLogo} alt="CourtMate" className="h-10 w-10" data-cornerkit-ignore />
+            <img src={courtMateLogo} alt="CourtMate" className="h-10 w-10" />
             <div className="text-[18.8px] font-semibold leading-6 tracking-[-0.02em] text-white">CourtMate</div>
           </div>
 
@@ -382,7 +391,8 @@ export function Host(props: { sessionId: string; secret?: string }) {
           >
             <div className="flex h-full gap-3">
               {courts.map((court) => {
-                const match = matchById(court.currentMatchId);
+                const currentMatch = matchById(court.currentMatchId);
+                const match = isLiveCourtMatch(currentMatch) ? currentMatch : undefined;
                 const teamA = match ? teamById(match.teamAId) : undefined;
                 const teamB = match ? teamById(match.teamBId) : undefined;
 
@@ -395,7 +405,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
                     teamB={teamB}
                     playerById={playerById}
                     coverageCompleted={coverageCompleted}
-                    canAssign={!!session?.locked}
+                    canAssign={!!session?.locked && !assigningCourtId}
                     onAssignNext={() => void handleAssignNext(court.id)}
                     onCancelMatch={() => {
                       if (!match) return;
@@ -540,6 +550,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
             onClose={() => setPendingAssign(null)}
             onConfirm={async (payload) => {
               try {
+                setAssigningCourtId(pendingAssign.courtId);
                 await assignPreparedMatch(
                   pendingAssign.courtId,
                   pendingAssign.teamA,
@@ -551,6 +562,8 @@ export function Host(props: { sessionId: string; secret?: string }) {
                 setPendingAssign(null);
               } catch (error: any) {
                 setToast({ id: nanoid(), kind: "error", message: error?.message ?? "Failed to assign next match" });
+              } finally {
+                setAssigningCourtId(null);
               }
             }}
           />

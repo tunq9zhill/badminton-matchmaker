@@ -135,7 +135,7 @@ export function Toast(props: { toast: ToastState }) {
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
         onTouchCancel={handleTouchEnd}
-        className={`${isLeaving ? "toast-move-out" : "toast-move-in"} toast-touch-dismiss pointer-events-auto relative mx-auto flex min-h-[88px] w-full max-w-[430px] items-start gap-4 overflow-hidden rounded-[16px] border border-white/5 bg-[#222B33] px-[18px] py-[18px] text-white shadow-[0_18px_50px_rgba(0,0,0,0.28)]`}
+        className={`${isLeaving ? "toast-move-out" : "toast-move-in"} toast-touch-dismiss pointer-events-auto relative mx-auto flex min-h-[88px] w-full max-w-[430px] items-start gap-4 overflow-hidden rounded-[16px] border border-white/5 bg-[#222B33] px-[18px] py-[18px] text-white shadow-[0px_4px_70px_rgba(0,0,0,0.5)]`}
       >
         <span className="pointer-events-none absolute inset-0" style={tone.accentStyle} aria-hidden="true" />
         <span className={`relative mt-1 grid h-7 w-7 flex-none place-items-center rounded-full ring-8 ${tone.iconClass} ${tone.ringClass}`}>
