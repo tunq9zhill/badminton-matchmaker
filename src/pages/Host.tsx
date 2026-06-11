@@ -42,12 +42,35 @@ type PendingAssign = {
   teamB: Team;
 };
 
+type PullRefreshState = {
+  pulling: boolean;
+  distance: number;
+  armed: boolean;
+  refreshing: boolean;
+};
+
+type PullRefreshTouchState = {
+  tracking: boolean;
+  pulling: boolean;
+  startX: number;
+  startY: number;
+  distance: number;
+};
+
 const COURT_CARD_WIDTH = 283;
 const COURT_CARD_GAP = 12;
 const COURT_CARD_STEP = COURT_CARD_WIDTH + COURT_CARD_GAP;
+const PULL_REFRESH_TRIGGER_DISTANCE = 78;
+const PULL_REFRESH_MAX_DISTANCE = 116;
+const IDLE_PULL_REFRESH: PullRefreshState = { pulling: false, distance: 0, armed: false, refreshing: false };
+const IDLE_PULL_TOUCH: PullRefreshTouchState = { tracking: false, pulling: false, startX: 0, startY: 0, distance: 0 };
 
 function isLiveCourtMatch(match: Match | undefined) {
   return !!match && (match.status === "scheduled" || match.status === "in_progress");
+}
+
+function refreshCurrentPage() {
+  window.location.reload();
 }
 
 export function Host(props: { sessionId: string; secret?: string }) {
@@ -62,12 +85,15 @@ export function Host(props: { sessionId: string; secret?: string }) {
   const [winnerTeamId, setWinnerTeamId] = useState("");
   const [showQr, setShowQr] = useState(false);
   const [activeCourtIndex, setActiveCourtIndex] = useState(0);
+  const [pullRefresh, setPullRefresh] = useState<PullRefreshState>(IDLE_PULL_REFRESH);
   const currentMatchScrollRef = useRef<HTMLDivElement | null>(null);
   const currentMatchDragRef = useRef({ active: false, startX: 0, scrollLeft: 0 });
   const currentMatchSnapTimerRef = useRef<number | null>(null);
   const playerScrollRef = useRef<HTMLDivElement | null>(null);
   const playerDragRef = useRef({ active: false, startX: 0, scrollLeft: 0 });
   const pairingCompleteNoticeRef = useRef<string | null>(null);
+  const pullRefreshTouchRef = useRef<PullRefreshTouchState>(IDLE_PULL_TOUCH);
+  const pullRefreshReloadTimerRef = useRef<number | null>(null);
 
   const setToast = useAppStore((s) => s.setToast);
 
@@ -161,6 +187,17 @@ export function Host(props: { sessionId: string; secret?: string }) {
   }, [session, teamById, teams]);
 
   const courtCountLabel = session?.config.courtCount ?? courts.length;
+  const isPullRefreshBlocked =
+    showQr ||
+    !!pendingAssign ||
+    !!showFinish ||
+    confirmHome ||
+    confirmEndSession ||
+    confirmResetPairing ||
+    confirmResetAll ||
+    !!confirmCancelMatch;
+  const pullRefreshVisible = pullRefresh.pulling || pullRefresh.refreshing;
+  const pullRefreshProgress = Math.min(1, pullRefresh.distance / PULL_REFRESH_TRIGGER_DISTANCE);
 
   useEffect(() => {
     setActiveCourtIndex((index) => Math.min(index, Math.max(courts.length - 1, 0)));
@@ -171,6 +208,94 @@ export function Host(props: { sessionId: string; secret?: string }) {
       if (currentMatchSnapTimerRef.current != null) window.clearTimeout(currentMatchSnapTimerRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    const mobileQuery = window.matchMedia("(hover: none) and (pointer: coarse)");
+    const previousHtmlOverscroll = document.documentElement.style.overscrollBehaviorY;
+    const previousBodyOverscroll = document.body.style.overscrollBehaviorY;
+    if (mobileQuery.matches) {
+      document.documentElement.style.overscrollBehaviorY = "contain";
+      document.body.style.overscrollBehaviorY = "contain";
+    }
+
+    const resetPullState = () => {
+      pullRefreshTouchRef.current = IDLE_PULL_TOUCH;
+      setPullRefresh(IDLE_PULL_REFRESH);
+    };
+
+    const onTouchStart = (event: TouchEvent) => {
+      if (isPullRefreshBlocked || !mobileQuery.matches || event.touches.length !== 1 || window.scrollY > 0) return;
+
+      const touch = event.touches[0];
+      pullRefreshTouchRef.current = {
+        tracking: true,
+        pulling: false,
+        startX: touch.clientX,
+        startY: touch.clientY,
+        distance: 0,
+      };
+    };
+
+    const onTouchMove = (event: TouchEvent) => {
+      const state = pullRefreshTouchRef.current;
+      if (!state.tracking || event.touches.length !== 1) return;
+
+      const touch = event.touches[0];
+      const deltaX = touch.clientX - state.startX;
+      const deltaY = touch.clientY - state.startY;
+
+      if (deltaY <= 0 || Math.abs(deltaX) > deltaY) {
+        if (state.pulling) resetPullState();
+        return;
+      }
+
+      if (window.scrollY > 0) {
+        resetPullState();
+        return;
+      }
+
+      const distance = Math.min(PULL_REFRESH_MAX_DISTANCE, deltaY * 0.56);
+      if (distance < 6) return;
+
+      event.preventDefault();
+      pullRefreshTouchRef.current = { ...state, pulling: true, distance };
+      setPullRefresh({
+        pulling: true,
+        distance,
+        armed: distance >= PULL_REFRESH_TRIGGER_DISTANCE,
+        refreshing: false,
+      });
+    };
+
+    const onTouchEnd = () => {
+      const state = pullRefreshTouchRef.current;
+      if (!state.tracking) return;
+
+      if (state.pulling && state.distance >= PULL_REFRESH_TRIGGER_DISTANCE) {
+        pullRefreshTouchRef.current = IDLE_PULL_TOUCH;
+        setPullRefresh({ pulling: false, distance: 54, armed: true, refreshing: true });
+        pullRefreshReloadTimerRef.current = window.setTimeout(refreshCurrentPage, 120);
+        return;
+      }
+
+      resetPullState();
+    };
+
+    window.addEventListener("touchstart", onTouchStart, { passive: true });
+    window.addEventListener("touchmove", onTouchMove, { passive: false });
+    window.addEventListener("touchend", onTouchEnd, { passive: true });
+    window.addEventListener("touchcancel", onTouchEnd, { passive: true });
+
+    return () => {
+      document.documentElement.style.overscrollBehaviorY = previousHtmlOverscroll;
+      document.body.style.overscrollBehaviorY = previousBodyOverscroll;
+      if (pullRefreshReloadTimerRef.current != null) window.clearTimeout(pullRefreshReloadTimerRef.current);
+      window.removeEventListener("touchstart", onTouchStart);
+      window.removeEventListener("touchmove", onTouchMove);
+      window.removeEventListener("touchend", onTouchEnd);
+      window.removeEventListener("touchcancel", onTouchEnd);
+    };
+  }, [isPullRefreshBlocked]);
 
   useEffect(() => {
     if (!session || !pairingCompleteNoticeKey) return;
@@ -294,7 +419,33 @@ export function Host(props: { sessionId: string; secret?: string }) {
 
   return (
     <div className="min-h-[100dvh] bg-[#0D2318] text-white">
-      <div className="mx-auto flex min-h-[100dvh] w-full max-w-[430px] flex-col px-4 pb-[max(24px,env(safe-area-inset-bottom))] pt-[max(16px,env(safe-area-inset-top))]">
+      <div
+        className={`pointer-events-none fixed left-1/2 top-[max(10px,env(safe-area-inset-top))] z-50 -translate-x-1/2 transition-opacity duration-150 ${
+          pullRefreshVisible ? "opacity-100" : "opacity-0"
+        }`}
+        aria-live="polite"
+      >
+        <div className="flex h-10 items-center gap-2 rounded-full border border-white/10 bg-[#153426]/95 px-3 text-[13px] font-medium text-white shadow-[0_8px_24px_rgba(0,0,0,0.22)] backdrop-blur">
+          <span
+            className={`h-4 w-4 rounded-full border-2 border-white/30 border-t-white ${
+              pullRefresh.refreshing ? "animate-spin" : ""
+            }`}
+            style={{
+              transform: pullRefresh.refreshing ? undefined : `rotate(${pullRefreshProgress * 270}deg)`,
+            }}
+          />
+          <span>{pullRefresh.refreshing ? "Refreshing" : pullRefresh.armed ? "Release to refresh" : "Pull to refresh"}</span>
+        </div>
+      </div>
+
+      <div
+        className={`mx-auto flex min-h-[100dvh] w-full max-w-[430px] flex-col px-4 pb-[max(24px,env(safe-area-inset-bottom))] pt-[max(16px,env(safe-area-inset-top))] ${
+          pullRefresh.pulling ? "" : "transition-transform duration-150"
+        }`}
+        style={{
+          transform: pullRefreshVisible ? `translateY(${Math.round(pullRefresh.distance * 0.32)}px)` : undefined,
+        }}
+      >
         <header className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <img src={courtMateLogo} alt="CourtMate" className="h-10 w-10" />
@@ -303,6 +454,7 @@ export function Host(props: { sessionId: string; secret?: string }) {
 
           <div className="flex items-center gap-2">
             <HeaderActionButton onClick={() => setShowQr(true)}>QR</HeaderActionButton>
+            <HeaderActionButton onClick={refreshCurrentPage}>Refresh</HeaderActionButton>
             <HeaderActionButton onClick={() => setConfirmHome(true)}>Exit</HeaderActionButton>
           </div>
         </header>
