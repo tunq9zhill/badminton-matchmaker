@@ -10,7 +10,7 @@
   "theme_color": "#37B64B",
   "icons": [
     {
-      "src": "/CourtMate-logo.png",
+      "src": "courtmate-logo.png",
       "sizes": "768x768",
       "type": "image/png",
       "purpose": "any maskable"
